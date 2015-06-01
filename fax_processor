@@ -1,0 +1,48 @@
+# fax_processor
+#
+# Script to process received faxes. It can be used for notification, printing,
+# and archival. Usage is determined the following variables:
+#
+# This script is normally run from /etc/cron.hourly
+
+ACTIVE=y
+NOTIFY=y
+PRINT=y
+ARCHIVE=y
+COPY=y
+
+# List of user accounts to send an Email notification to
+NOTIFY_LIST="rohare,cohare"
+
+# List of faxes recieved
+FAX_LIST=`ls /var/spool/fax/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.* \
+	 2>/dev/null`
+
+# Check for new fax
+NEW_FAX=`echo $FAX_LIST | grep -c "No such file or directory"`
+
+# If there are new faxes
+if [ $NEW_FAX -gt 0 ]; then
+
+	# Fax Reciept Notification
+	if [ $NOTIFY = "y" ]; then
+		echo "$FAX_LIST" | sed 's!/var/spool/fax/!!' | \
+		 elm -s "Fax Received" $NOTIFY_LIST -
+	fi
+
+	# Copy fax to local directory
+	if [ $COPY = "y" ]; then
+		cp $FAX_LIST /home/cohare/fax/ 
+	fi
+
+	# Print fax
+	if [ $PRINT = "y" ]; then
+		/usr/bin/fax print $FAX_LIST
+	fi
+		
+	# Move new fax to archive
+	# Note: This must be the last talk performed!!!
+	if [ $ARCHIVE = "y" ]; then
+		mv $FAX_LIST /var/spool/fax/archive/ 
+	fi
+fi

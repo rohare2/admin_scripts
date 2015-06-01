@@ -1,0 +1,340 @@
+#!/usr/bin/perl -w
+#
+# $Id: sar_plot 13 2012-02-08 16:06:31Z rohare $
+# $URL: file:///usr/local/svn/admin/scripts/sar_plot $
+#
+# sar_plot plots sar output using gnuplot.
+
+use strict;
+use Getopt::Long;
+$Getopt::Long::ignorecase = 0;
+
+
+my $OPT;
+my @data;
+my $datafile="/tmp/gnuplot_data$$";
+my $cmndfile="/tmp/gnuplot_cmnd$$";
+
+# Process command line options
+my ($help_parm,$net_parm,$cpu_parm,$mem_parm,$start_parm,$end_parm,
+	$io_tps_parm,$io_bps_parm,$file_parm);
+my %optctl = ( bps =>  \$io_bps_parm,
+	e => \$end_parm,
+	h => \$help_parm,
+	f => \$file_parm,
+	n => \$net_parm,
+	r => \$mem_parm,
+	s => \$start_parm,
+	tps => \$io_tps_parm,
+	u => \$cpu_parm);
+
+my $ret = &GetOptions(\%optctl, "bps", "e=s", "h", "tps", "n=s", "r",
+	"s=s", "u", "f=s");
+
+$ret == 1 || die "Can't process options: $!";
+
+defined $help_parm && &usage;
+
+! defined $net_parm && ! defined $mem_parm && ! defined $cpu_parm &&
+	! defined $io_bps_parm && ! defined $io_tps_parm &&
+	! defined $io_tps_parm && ($cpu_parm = 1);
+
+# Determine operating system
+my $OS = `uname -o`;
+chomp $OS;
+
+
+# Assign sar command options based upon OS version
+if ($OS eq 'GNU/Linux') {
+	defined $io_tps_parm && ($OPT = "-b");
+	defined $io_bps_parm && ($OPT = "-b");
+	defined $net_parm && ($OPT = "-n $net_parm");
+	defined $mem_parm && ($OPT = "-r");
+	defined $cpu_parm && ($OPT = "-u");
+}
+
+if (defined $start_parm && defined $end_parm){
+	$OPT = $OPT . " -s $start_parm -e $end_parm";
+}
+
+defined $file_parm && ($OPT = $OPT . " -f /var/log/sa/${file_parm}");
+
+# Execute sar command
+@data = `sar $OPT`;
+
+#
+## Parse data
+#
+
+# Linux systems
+if ($OS eq 'GNU/Linux') {
+	$cpu_parm && &LinuxCPU();
+	$io_bps_parm && &LinuxIO_bps();
+	$io_tps_parm && &LinuxIO_tps();
+	$net_parm && $net_parm eq "DEV" && &LinuxNetDEV();
+	$mem_parm && &LinuxMem();
+
+}
+
+# Create graph using gnuplot
+system ("/usr/bin/gnuplot $cmndfile");
+system ("/usr/bin/eog sar_plot.png &");
+
+# Cleanup temp files
+unlink $datafile;
+unlink $cmndfile;
+
+exit 0;
+
+#
+## Usage
+##
+sub usage() {
+	print STDERR << "EOF";
+Usage:	sar_plot {-bhru} [-f sadd] [-s hr:min:sec] [-e hr:min:sec]
+
+	sar_plot -n {DEV|EDEV|NFS|NFSD|SOCK} --dev=<device> [-f sadd] [-s hr:min:sec] [-e hr:min:sec]
+
+	-e	Ending time
+	-h	This help message
+	-b	Block IO statistics
+	-n	Network statistics
+	-r	Memory statistics
+	-s	Starting time
+	-u	CPU load stastics
+EOF
+	exit;
+}
+
+
+#
+## Linux CPU load
+#
+sub LinuxCPU() {
+	my ($hms,$AorP,$cpu,$usr,$nice,$sys,$wio,$steal,$idle);
+	my ($hr,$min,$sec);
+
+	open (DATA, "> $datafile") || die "Cannot open data file";
+
+	foreach my $line (@data){
+		$line =~ /^\d+/ || next;
+		$line =~ /^$/ && next;
+		$line =~ /%user/ && next;
+		$line =~ /RESTART/ && next;
+
+		chomp $line;
+		($hms,$AorP,$cpu,$usr,$nice,$sys,$wio,$steal,$idle) =
+			split (' ', $line);
+
+		($hr,$min,$sec) = split(':', $hms);
+		$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+		$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+		
+		$min = $hr*60 + $min;
+		$sec = $min*60 + $sec;
+
+		printf DATA ("%.2f %.1f %.1f %.1f %.1f\n", $sec/3600,$usr,$sys,$wio,$idle);
+	}
+	close DATA;
+
+	open (CMND, "> $cmndfile") || die "Cannot open command file";
+	print CMND "set term png\n";
+	print CMND "set out 'sar_plot.png'\n";
+	print CMND "set grid\n";
+	print CMND "set title 'CPU Usage'\n";
+	print CMND "set xlabel 'Hour of Day'\n";
+	print CMND "set ylabel 'percent'\n";
+	print CMND "plot '$datafile' using 1:2 title 'usr' with lines, \\\n";
+	print CMND "     '$datafile' using 1:3 title 'sys' with lines, \\\n";
+	print CMND "     '$datafile' using 1:4 title 'wio' with lines, \\\n";
+	print CMND "     '$datafile' using 1:5 title 'idle' with lines\n";
+	close CMND;
+}
+
+
+#
+## Linux IO in transfers per secound
+#
+sub LinuxIO_tps() {
+	my ($hms,$AorP,$tps,$rtps,$wtps,$bread,$bwrtn);
+	my ($hr,$min,$sec);
+
+	open (DATA, "> $datafile") || die "Cannot open data file";
+
+	foreach my $line (@data){
+		$line =~ /^\d+/ || next;
+		$line =~ /^$/ && next;
+		$line =~ /bread/ && next;
+		$line =~ /RESTART/ && next;
+
+		chomp $line;
+		($hms,$AorP,$tps,$rtps,$wtps,$bread,$bwrtn) =
+			split (' ', $line);
+
+		($hr,$min,$sec) = split(':', $hms);
+		$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+		$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+		
+		$min = $hr*60 + $min;
+		$sec = $min*60 + $sec;
+
+		printf DATA ("%.2f %.1f %.1f %.1f\n",
+			$sec/3600,$tps,$rtps,$wtps);
+	}
+	close DATA;
+
+	open (CMND, "> $cmndfile") || die "Cannot open command file";
+	print CMND "set term png\n";
+	print CMND "set out 'sar_plot.png'\n";
+	print CMND "set grid\n";
+	print CMND "set title 'IO Usage'\n";
+	print CMND "set xlabel 'Hour of Day'\n";
+	print CMND "set ylabel 'per second'\n";
+	print CMND "plot '$datafile' using 1:2 title 'tps' with lines, \\\n";
+	print CMND "     '$datafile' using 1:3 title 'rtps' with lines, \\\n";
+	print CMND "     '$datafile' using 1:4 title 'wtps' with lines\n";
+	close CMND;
+}
+
+
+#
+## Linux IO in blocks per secound
+#
+sub LinuxIO_bps() {
+	my ($hms,$AorP,$tps,$rtps,$wtps,$breads,$bwrtns);
+	my ($hr,$min,$sec);
+
+	open (DATA, "> $datafile") || die "Cannot open data file";
+
+	foreach my $line (@data){
+		$line =~ /^\d+/ || next;
+		$line =~ /^$/ && next;
+		$line =~ /bread/ && next;
+		$line =~ /RESTART/ && next;
+
+		chomp $line;
+		($hms,$AorP,$tps,$rtps,$wtps,$breads,$bwrtns) =
+			split (' ', $line);
+
+		($hr,$min,$sec) = split(':', $hms);
+		$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+		$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+		
+		$min = $hr*60 + $min;
+		$sec = $min*60 + $sec;
+
+		printf DATA ("%.2f %.1f %.1f\n",
+			$sec/3600,$breads,$bwrtns);
+	}
+	close DATA;
+
+	open (CMND, "> $cmndfile") || die "Cannot open command file";
+	print CMND "set term png\n";
+	print CMND "set out 'sar_plot.png'\n";
+	print CMND "set grid\n";
+	print CMND "set title 'IO Usage'\n";
+	print CMND "set xlabel 'Hour of Day'\n";
+	print CMND "set ylabel 'per second'\n";
+	print CMND "plot '$datafile' using 1:2 title 'bread/s' with lines, \\\n";
+	print CMND "     '$datafile' using 1:3 title 'bwrtn/s' with lines\n";
+	close CMND;
+}
+
+
+#
+## Linux Net load
+#
+sub LinuxNetDEV() {
+	my ($hms,$AorP);
+	my ($iface,$rxpcks,$txpcks,$rxbyts,$txbyts,$rxcmps,$txcmps,$rxmcsts);
+	my ($hr,$min,$sec);
+	my %iface;
+	my $iparm = shift @ARGV;
+
+	open (DATA, "> $datafile") || die "Cannot open data file";
+
+	foreach my $line (@data){
+		$line =~ /^\d+/ || next;
+		$line =~ /^$/ && next;
+		$line =~ /IFACE/ && next;
+		$line =~ /Average/ && next;
+		$line =~ /RESTART/ && next;
+
+		chomp $line;
+		($hms,$AorP,$iface,$rxpcks,$txpcks,$rxbyts,$txbyts,$rxcmps,$txcmps,$rxmcsts) =
+			split (' ', $line);
+
+		$iface eq "$iparm" || next;
+
+		($hr,$min,$sec) = split(':', $hms);
+		$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+		$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+		
+		$min = $hr*60 + $min;
+		$sec = $min*60 + $sec;
+
+		printf DATA ("%.2f %.1f %.1f\n", $sec/3600,$rxbyts,$txbyts);
+	}
+	close DATA;
+
+	open (CMND, "> $cmndfile") || die "Cannot open command file";
+	print CMND "set term png\n";
+	print CMND "set out 'sar_plot.png'\n";
+	print CMND "set grid\n";
+	print CMND "set title 'Net Usage'\n";
+	print CMND "set ylabel 'per second'\n";
+	print CMND "plot '$datafile' using 1:2 title 'rxbyts' with lines, \\\n";
+	print CMND "     '$datafile' using 1:3 title 'txbyts' with lines\n";
+	close CMND;
+}
+
+
+#
+## Linux Memory usage
+#
+sub LinuxMem() {
+	my ($hms,$AorP);
+	my ($hr,$min,$sec);
+	my ($kbmemfree,$kbmemused,$pmemused,$kbbuffers,$kbcached,$kbswpfree,
+		$kbswpused,$pswpused,$kbswpcad);
+
+	open (DATA, "> $datafile") || die "Cannot open data file";
+
+	foreach my $line (@data){
+		$line =~ /^\d+/ || next;
+		$line =~ /^$/ && next;
+		$line =~ /kbmemfree/ && next;
+		$line =~ /Average/ && next;
+		$line =~ /RESTART/ && next;
+
+		chomp $line;
+		($hms,$AorP,$kbmemfree,$kbmemused,$pmemused,$kbbuffers,$kbcached,$kbswpfree,
+			$kbswpused,$pswpused,$kbswpcad) = split (' ', $line);
+
+		($hr,$min,$sec) = split(':', $hms);
+		$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+		$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+		
+		$min = $hr*60 + $min;
+		$sec = $min*60 + $sec;
+
+		printf DATA ("%.2f %.1f %.1f %.1f %.1f %.1f\n",
+			$sec/3600,$kbmemfree,$kbmemused,$kbbuffers,$kbcached,$kbswpused);
+	}
+	close DATA;
+
+	open (CMND, "> $cmndfile") || die "Cannot open command file";
+	print CMND "set term png\n";
+	print CMND "set out 'sar_plot.png'\n";
+	print CMND "set grid\n";
+	print CMND "set title 'Memory Usage'\n";
+	print CMND "set xlabel 'Hour of Day'\n";
+	print CMND "set ylabel 'kbytes or %'\n";
+	print CMND "plot '$datafile' using 1:2 title 'kbmemfree' with lines, \\\n";
+	print CMND "     '$datafile' using 1:3 title 'kbmemused' with lines, \\\n";
+	print CMND "     '$datafile' using 1:4 title 'kbbuffers' with lines, \\\n";
+	print CMND "     '$datafile' using 1:5 title 'kbcached' with lines, \\\n";
+	print CMND "     '$datafile' using 1:6 title 'kbswpused' with lines\n";
+	close CMND;
+}
+

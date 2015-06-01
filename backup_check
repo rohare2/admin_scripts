@@ -1,0 +1,107 @@
+#!/usr/bin/perl
+###############################################################################
+# $URL: file:///usr/local/svn/admin/scripts/backup_check $
+# $Author: westlund $
+# $Date: 2007-04-19 10:38:46 -0700 (Thu, 19 Apr 2007) $
+# $Rev: 5467 $
+###############################################################################
+
+###############################################################################
+# This script should only be run on nodes that you are expecting to be backed
+# up. On Linux systems it's best to run the script out of cron via the cronjob 
+# script with the '-g backup -e root' options.
+###############################################################################
+
+use Sys::Hostname;
+
+# setup some variables
+$filename = "/nsr/res/servers";
+$hostname = `hostname -s`;
+chomp $hostname;
+$count = 0;
+$failed = 0;
+$command = "/usr/sbin/mminfo";
+@heads = ();
+
+# First see if we can run
+if (!-e $filename) { die "$0: No $filename - this node is not being backed up\n"; }
+if (!-x $command)  { die "$0: $command cannot be executed, is Legato installed?\n" }
+
+# open file with backup server name
+open(SERVER, $filename);
+
+while(<SERVER>) {
+	s/#.*//;		# remove comment lines
+	next if (/^\s*$/);	# skip empty lines
+	chomp($server = $_);
+
+	print "Backup of $hostname by $server:\n";
+
+	# run command to get backup data	
+	open(OUTPUT, "$command -v -s $server -c $hostname -t 'last day' 2>&1 |");
+
+	while(<OUTPUT>) {
+		# skip header if it matches what we expect
+		next if ($. == 1 && m/^\svolume\s+client\s+date\s+time\s+size\s+ssid\s+fl\s+lvl\s+name$/);
+		chomp($thisline = $_);
+		
+		# really ugly regex to get out information
+		if ( $thisline =~ m!^\s*
+				     \S+\s+                       # volume
+				     \Q$hostname\E(?:-pub)?\s+    # client
+				     (\d+/\d+/\d+)\s+             # date
+				     (\d\d:\d\d:\d\d)\s+          # time
+				     \d+\s+ [TGMK]?B\s+           # size
+				     \d+\s+                       # ssid
+				     (\w+)\s+                     # fl
+				     \w+\s+                       # lvl
+				     (/.*)                        # name
+				   !x) {
+			$date = $1;		# date backup ran
+			$time = $2;		# time backup ran
+			$exitcode = $3;		# exit code of backup
+			$mount = $4;		# mount point what was backed up
+			$count = $count + 1;	# one more backup
+
+			# back ups that worked have an exit code that starts with 'c'
+			# other acceptable codes are 'h', 'm', 't'
+			if ( $exitcode =~ m/^[ct].*/ ) {
+				print "$date $time: Backed up $mount\n";
+				# seems like tails will occasionally be listed before heads.
+				#if ( $exitcode =~ m/^t.*/ ) { 
+					# all this really tells us is there is a mismatch 
+					# between heads and tails not which head and tail failed.
+					# die "$0: Got a tail before a head\n" unless defined pop( @heads ); 
+				#}
+			} elsif ( $exitcode =~ m/^[mh].*/ ) {
+				# if ( $exitcode =~ m/^h.*/ ) {
+					# head of the backup is on this media
+					# wait for a tail before declaring success
+				#	push( @heads, $mount );
+				# } 
+					# I believe we can ignore 'm's
+					# there should be a head and tail associated
+			} else { # otherwise there was a failure
+				print "$date $time: Backup FAILED with \"$exitcode\" for $mount\n";
+				$failed = $failed + 1;	# inc failure count
+			}
+		}
+		else { # failing to parse a line is bad
+			die("$0: Failed to parse: $thisline\n");
+		}
+	}
+
+	close(OUTPUT);
+}
+
+close(SERVER);
+
+# if we had a failure say so
+if ( $failed > 0 ) {
+	print "$failed back-up(s) of $hostname failed out of $count\n";
+} else { # otherwise all worked as expected
+	print "All $count back-up(s) suceeded\n";
+}
+
+# exit with number of failures
+exit $failed;

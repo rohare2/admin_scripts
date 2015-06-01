@@ -1,0 +1,50 @@
+#!/bin/bash
+# $Id: smart_disk_test 34 2013-04-10 02:49:21Z rohare $
+# $URL: file:///usr/local/svn/admin/scripts/smart_disk_test $
+cnt=$#
+mail=0
+usage="Usage: smart_disk_test [-h|-m]"
+EMAILMESSAGE="/tmp/smart_disk_test.txt"
+EMAIL="rohare2@gmail.com"
+
+if [ "$cnt" -gt "1" ]; then
+	echo "$usage"
+	exit
+fi
+
+if [ "$cnt" -eq "1" ]; then
+	case $1 in
+		-m)
+			mail=1
+			;;
+
+		*)
+			echo "$usage"
+			exit
+			;;
+	esac
+fi
+
+for drive in sda sdb sdc sdd; do
+	ans=`/usr/sbin/smartctl -H /dev/${drive}`
+	echo "${ans}" > $EMAILMESSAGE
+	rc=`grep 'result: PASSED' "$EMAILMESSAGE"`
+
+	if [ $? == 0 ]; then
+		if [ $mail == 1 ]; then
+			SUBJECT="Disk ${drive} passed selftest"
+			/bin/mail -s "$SUBJECT" "$EMAIL" < $EMAILMESSAGE
+		else
+			echo "${drive} PASSED selftest"
+		fi
+	fi
+
+	if [ $? == 1 ]; then
+		if [ $mail == 1 ]; then
+			SUBJECT="Disk ${drive} failed selftest"
+			/bin/mail -s "$SUBJECT" "$EMAIL" < $EMAILMESSAGE
+		else
+			echo "${drive} FAILED selftest"
+		fi
+	fi
+done

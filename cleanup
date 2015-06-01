@@ -1,0 +1,792 @@
+#!/usr/bin/perl -w
+#
+# $Id: cleanup 13 2012-02-08 16:06:31Z rohare $
+# $URL: file:///usr/local/svn/admin/scripts/cleanup $
+#
+# cleanup is a PERL script that cleans up temporary files
+# to make room on the file system.
+# 
+# Written by Rich O'Hare
+#
+#
+use strict;
+use File::Find ();
+use vars qw($opt_a $opt_c $opt_f $opt_g $opt_h $opt_l $opt_m $opt_n $opt_N $opt_t $opt_w);
+use Getopt::Std;
+use Filesys::Df;
+use Errno qw(EAGAIN);
+use POSIX "sys_wait_h";
+require "/usr/lib/genders/gendlib.pl";
+
+$ENV{PATH} = "/bin:/usr/bin";    # Ensure a secure PATH
+$| = 1;
+
+# Configureable options
+my $ConfigFile = "/etc/cleanup.conf";
+my $DefaultWidth = 8;	# Default number of forked directory searches
+my $DPCSdir = "/var/tmp/dpcs";
+my $SyslogDir = "/var/log";
+my $LockFile = "/var/run/cleanup";
+my $MinAgeLimit = 5;	# Escalage mode can not go below this value
+
+
+my $TEST;
+my $Width;
+my ($Tag,$Path,$TopLevel,$StartPc,$StopPc,$MaxNo,$MinAge,$MinSize,$MkLogs,$MxFork);
+my ($node, $line, $DF, $cnt, $ent, $val, $key, $type);
+my (@entries, %pids, $entry, $done);
+my $deleted = 0;
+my $ForkCount = 0;
+my ($FileList, $LogDir);
+our (%localH, %globalH, %clusterH, %excludeH, %pruneH);
+
+my %codes = ("%" => "%37", ":" => "%58", "" => "%12");
+my %chars; @chars{values %codes} = keys %codes;
+
+my $Header =
+"############################################################################
+#                     TOP                   MAX     MIN   MIN   MAKE  MAX  #
+#TAG    PATH          LEVEL  START%  STOP%  NUMBER  AGE   SIZE  LOGS  FORK #
+############################################################################";
+
+
+#
+# Gaurd against multiple cleanup processes.
+#
+( -f $LockFile ) and die "Error: Cleanup already running";
+
+# Create lock file
+open (LOCK, "> $LockFile") or
+	die "Error: Can not write lock file: $!";
+
+
+#
+## Process command line options
+#
+getopts('acghlmtf:n:N:w:') or die "Error reading command options: $!";
+
+
+# Ensure proper usage
+if ((! $opt_a && ! $opt_g && ! $opt_l && ! $opt_c) ||
+	($opt_a && ($opt_g || $opt_l || $opt_c))) {
+		&usage();
+}
+
+# Run in test mode
+($opt_t) && ($TEST = 1);		# Set to "1" for test mode
+
+
+# Decide on a suitable configuration file
+if ($opt_f) {
+	$ConfigFile = $opt_f;
+}
+
+
+# 
+## Required for Find module
+#
+# for the convenience of &wanted calls, including -eval statements:
+use vars qw/*name *dir *prune/;
+*name   = *File::Find::name;
+*dir    = *File::Find::dir;
+*prune  = *File::Find::prune;
+
+
+#
+## Find local host name
+#
+$node = `uname -n`;
+$node =~ s/\..*//;
+chomp $node;
+
+
+#
+## Check for purge genders attribute
+#
+if (Genders::hasattr("purge")) {
+	$opt_g = 1;
+	$opt_c = 1;
+}
+
+
+#
+## Process options
+#
+if ($opt_a) {	# If option -a, set global, local & cluster
+	$opt_g = 1;
+	$opt_l = 1;
+	$opt_c = 1;
+}
+
+if ($opt_n) {	# Does global cleanup node name match localhost
+        $opt_n =~ s/\..*//;
+        chomp $opt_n;
+        $opt_n ne $node && ($opt_g = 0);
+}
+
+if ($opt_N) {	# Does cluster cleanup node name match localhost
+	$opt_N =~ s/\..*//;
+	chomp $opt_N;
+	$opt_N ne $node && ($opt_c = 0);
+}
+
+
+#
+## Process entries in cleanup.conf file
+#
+open (CONF, "< $ConfigFile") or
+	die "Can't open $ConfigFile: $!";
+
+# Build a hash for each type of tag in cleanup.conf
+while (<CONF>) {
+      ( /^#/ || /^\s*$/) && next;
+	chomp ($line = $_);
+
+	($Tag, $Path) = split (/\s+/, $line);
+	(! $Path) && (warn "Malformed configuration file entry\n\t$line\n") && next;
+	$Path =~ s/\s*//g;
+
+	$Tag =~ /^local$/   && ($localH{$Path} = $line);
+	$Tag =~ /^global$/  && ($globalH{$Path} = $line);
+	$Tag =~ /^cluster$/ && ($clusterH{$Path} = $line);
+	$Tag =~ /^exclude$/ && ($excludeH{$Path} = $line);
+	$Tag =~ /^prune$/   && ($pruneH{$Path} = $line);
+}
+close CONF or die "Error closing configuration file: $!";
+
+
+#
+## Run CleanMgr against all requested file systems
+#
+foreach $key (keys %localH) {
+	($opt_l) && &CleanMgr($localH{$key});
+}
+
+foreach $key (keys %globalH) {
+	($opt_g) && &CleanMgr($globalH{$key});
+}
+
+foreach $key (keys %clusterH) {
+	($opt_c) && &CleanMgr($clusterH{$key});
+}
+
+close LOCK;
+if ( -f $LockFile ){
+	unlink $LockFile;
+}
+
+exit;
+
+
+#########################################
+## Subroutines
+#########################################
+sub wanted {
+	my ($dev,$size,$atime,$mtime);
+
+	(($dev,undef,undef,undef,undef,undef,undef,$size,$atime,
+		$mtime,undef,undef,undef) = lstat($_)) or return;
+	
+	!($File::Find::prune) != ($dev != $File::Find::topdev) or return;
+
+	my $Ancient = $MinAge*10 ;
+	if ($opt_m) {
+		if (int(-M _) >= $MinAge && $size >= $MinSize) {
+			if (int(-M _) > $Ancient && -f $name && ! -l $name && ! -d $name ) { 
+				$DF = df($Path);
+				$StopPc < $DF->{per} && kill_ancients($name);
+			} else {
+				$name =~ s/(:|%|)/$codes{$1}/ge;
+				print SUB_LIST ("$name:$mtime:$size:$atime\n");
+			}
+		}
+	} else {
+		if (((int(-M _) >= $MinAge) && (int(-A _) >= $MinAge)) && ($size >= $MinSize)) {
+			if ((int(-M _) > $Ancient && (int(-A _) > $Ancient)) &&
+				 -f $name && ! -l $name && ! -d $name ) { 
+				$DF = df($Path);
+				$StopPc < $DF->{per} && kill_ancients($name);
+			} else {
+				$name =~ s/(:|%|)/$codes{$1}/ge;
+				print SUB_LIST ("$name:$mtime:$size:$atime\n");
+			}
+		}
+	}
+}
+
+
+#
+## Cleanup manager
+#
+sub CleanMgr {
+	my $line = shift @_;
+	# rln is number of run logs to keep
+	my $rln = 9;		
+	my $newrl;
+
+	($Tag,$Path,$TopLevel,$StartPc,$StopPc,$MaxNo,$MinAge,$MinSize,
+	 $MkLogs,$MxFork) = split (/\s+/, $line);
+	
+	my ($ret, @dfA);
+	$done = 0;
+
+	#
+	# Log using standard syslogd
+	#
+	if ( -f "/etc/syslog.conf" ) {
+		$ret = `grep -c "# Cleanup script run log" /etc/syslog.conf`;
+	
+		if ( $ret == 0 ) {
+			print "Add the following to syslog configuration.\n";
+			print "# Cleanup script run log\n";
+			print "local5.=info				$SyslogDir/cleanup.log\n";
+		}
+	}
+							  
+	#
+	# Ensure the log file directory exists
+	#
+	$LogDir = "$Path/cleanup";
+	( ! -d $LogDir ) && mkdir "$LogDir";
+	chmod 0755, "$LogDir";
+	chown '0', '0', $LogDir;
+
+	#
+	# Open run log file
+	#
+	my $rlogfile = "$LogDir/cleanup_run.log";
+
+	# Rotate logs
+	while ( $rln > 1 ) {
+		$newrl = $rln - 1;
+		( -f "${rlogfile}.$newrl" ) && `mv ${rlogfile}.$newrl ${rlogfile}.$rln`;
+		$rln -=1;
+	}
+	( -f "${rlogfile}" ) && `mv ${rlogfile} ${rlogfile}.1`;
+
+	open (RLOG, "> $rlogfile") ||
+		die "Could not open $rlogfile: $! \n";
+
+	chown '0', '0', "$rlogfile";
+	chmod 0660, "$rlogfile";
+
+	#
+	# Print run log entry
+	#
+	my $now_string = localtime;
+
+	print "[$now_string] $node\n";
+	print RLOG "[$now_string] $node\n";
+	print "$Header\n";
+	print RLOG ("$Header\n");
+	print "$line\n";
+	print RLOG ("$line\n");
+
+	#
+	# Sanity check
+	#
+	if ($StopPc ne '-' && $MaxNo ne '-') {
+		print "Error: Can not specify STOP% and MAX NUMBER concurrently\n";
+		return 1;
+	}
+
+	#
+	# Cleanup entries that use a "-"
+	#
+	$MinAge =~ s/-/0/;
+	$MinSize =~ s/-/0/;
+	$MxFork =~ s/-/$DefaultWidth/;
+
+	#
+	# Determine maximum fork level
+	#
+	if ($opt_w) {
+		$Width = $opt_w;
+	} else {
+		($MxFork > 0) && ($Width = $MxFork);
+		($MxFork == 0) && ($Width = $DefaultWidth);
+	}
+
+	#
+	# See how full the filesystem is
+	#
+	$DF = df($Path);
+	print "$Path is $DF->{per}% full\n";
+	print RLOG ("$Path is $DF->{per}% full\n");
+	($StartPc ne "-") && ($DF->{per} <= $StartPc) && return;
+	
+	#
+	# Convert file size units
+	#
+	($MinSize =~ /^\d+[kK]$/) && ($MinSize =~ s/[kK]//) &&
+		($MinSize = $MinSize *= 1024);
+	$MinSize =~ /^\d+[mM]$/ && $MinSize =~ s/[mM]// &&
+		($MinSize = $MinSize *= 1048576);
+	$MinSize =~ /^\d+[gG]$/ && $MinSize =~ s/[gG]// &&
+		($MinSize = $MinSize *= 1073741824);
+	$MinSize =~ /^\d+[tT]$/ && $MinSize =~ s/[tT]// &&
+		($MinSize = $MinSize *= 1099511627800);
+
+	#
+	# Clean until all conditions are met
+	#
+	until ($done == 1) {
+		#
+		# Turn over the dirty work to the cleaner
+		#
+		&Clean;
+
+		
+		# Criteria check
+		(($StartPc eq "-") or ($StopPc eq "-")) && ($done = 1);
+		
+		#
+		# If all conditions are met leave
+		#
+		$DF = df($Path);
+
+		if (($done == 0) && ($StopPc >= $DF->{per})) {
+			$done = 1;
+			print ("Cleanup complete $Path now $DF->{per}% full\n\n");
+			print RLOG ("Cleanup complete $Path now $DF->{per}% full\n\n");
+		}
+
+		#
+		# Go into escalate mode
+		#
+		if (($done == 0) && ($StopPc < $DF->{per})) {
+			$MinAge /= 2;
+
+			if ($MinAge < $MinAgeLimit) {
+				$done = 1;
+				print "MinAge less than MinAgeLimit can not escalate\n";
+				print RLOG "MinAge less than MinAgeLimit can not escalate\n";
+			}
+
+			if ($MinAge >= $MinAgeLimit) {
+				$done = 0;
+				@entries = ();
+			
+				print ("Escalation required $Path still $DF->{per}% full\n");
+				print "MinAge now $MinAge\n";
+
+				print RLOG (
+					"Escalation required $Path still $DF->{per}% full\n");
+				print RLOG "MinAge now $MinAge\n";
+
+				$TEST && ($done = 1) &&
+					print "Can not escalate in test mode\n";
+			}
+
+		} else {
+			$done = 1;
+		}
+	}	
+	close RLOG or warn "Error closing run log";
+	`logger -p local5.info "Finished cleaning: $Path"`;
+}
+
+
+#
+## Do the actual cleanup work
+#
+sub Clean {
+
+	`logger -p local5.info "Started  cleaning: $Path"`;
+	$ForkCount = 0 ;
+	$FileList = "$LogDir/FileList";
+
+	#
+	# Create a list of files and directories in the Path
+	#
+	-e $FileList && unlink $FileList;
+	open (LIST, "> $FileList") or
+		die "can't write to $FileList: $!\n";
+	chmod 0640, $FileList;
+	chown '0', '0', $FileList;
+
+	opendir(DIR, $Path) or die "can't open directory $Path: $!";
+
+	while (defined($entry = readdir(DIR))) {
+		$entry =~ /^\.\.?$/ && next;  # Skip . & ..
+
+		if ( -d "$Path/$entry" ) { 
+			# Build an array of directory entries
+			push @entries, $entry;
+
+			&finder;	# search directories in parrallel
+		} else {
+			$name = "$Path/$entry";
+			my ($dev,$size,$atime,$mtime);
+
+			if ((($dev,undef,undef,undef,undef,undef,undef,$size,$atime, 
+				$mtime,undef,undef,undef) = lstat($name)) &&
+				(int(-A _) >= $MinAge && int(-M _) >= $MinAge) &&
+				($size >= $MinSize)) {
+
+				$name =~ s/(:|%|)/$codes{$1}/ge;
+				print LIST ("$name:$mtime:$size:$atime\n");
+			}
+		}
+	}
+	close LIST or warn "Error closing FileList";
+	
+	#
+	# Concatinate file lists
+	#
+	&joiner;
+
+	#
+	# Process age sorted list of files ready to purge
+	#
+	$cnt = 1;
+	my $delta;
+
+	if ($StopPc eq "-") {
+		$delta = "NA";
+	} else { 
+		$delta = ((1 - $StopPc/100) * $DF->{blocks} - $DF->{bavail}) * 1024;
+	}
+
+	if ($StopPc eq "-") {
+		open (TOTAL_LIST, "< $FileList");
+	} else {
+		open (TOTAL_LIST, "sort -n -t: -k2,2 $FileList |") or
+			die "Could not open $FileList: $!";
+	}
+
+	LINE:
+	while (<TOTAL_LIST>) {
+      		my $line = $_;
+      		chomp $line;
+		my ($xkey, $ret);
+		my $xfile = "no";
+		my ($dev,$ino,$mode,$nlink,$uid,$gid,$owner);
+
+		if (($delta eq "NA") or ($deleted <= $delta) &&
+			($MaxNo eq "-" || $cnt <= $MaxNo )) {
+
+			my ($ent,$mtime,$size,$atime) = split (/:/, $line);
+			chomp $ent;
+
+			# Remove escaped charachters
+			$ent =~ s/(%37|%58|%12)/$chars{$1}/ge;
+
+			# Skip standard system files
+			$ent =~ m#^.*/\.snapshot/?.*$# && next;
+			$ent =~ m#^.*/\.nsr/?$# && next; 
+
+			# Skip files on the exclution list
+			exists $excludeH{$ent} && next;
+
+			# Top level directories
+			if (-d $ent) { 
+				# Not OK to delete top level directories
+				$TopLevel =~ /[Nn-]/ && $ent =~ m#$Path/[^/]+$# && next;
+			}
+
+			# Skip files in pruned directorys
+			foreach my $pkey (keys %pruneH) {
+				$ent =~ m#^$pkey(/.*)*$# && next LINE ;
+			}
+
+			# Determine file ownership
+			($dev,$ino,$mode,$nlink,$uid,$gid) = lstat($ent) ;
+			(defined ($owner = getpwuid($uid))) or ($owner = $uid);
+
+			# Process directories
+			if ( -d $ent) {
+				if (! $TEST ) {
+					$ret = rmdir $ent;
+					if ($ret == 1) {
+						print ("rmdir $ent\n");
+						&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+						$cnt += 1;
+						$deleted += $size;
+					}
+				} else {  # Test mode
+					print ("rmdir $ent\n");
+					&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+					$cnt += 1;
+					$deleted += $size;
+				}
+				next;
+			}
+
+			# Process links
+			if ( -l $ent ) {
+				my $lfile = readlink $ent;
+				(-f $lfile) && next;
+				
+				if (! $TEST ) {
+					$ret = unlink $ent;
+					if ($ret > 0) {	
+						print "rm	$ent\n";
+						&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+						$cnt += 1;
+						$deleted += $size;
+					}
+				} else {  # Test mode
+					print "rm	$ent\n";
+					&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+					$cnt += 1;
+					$deleted += $size;
+				}
+				next;
+			}
+
+			# Process regular files
+			if ( -f $ent && ! -l $ent && ! -d $ent ) {
+				if (! $TEST ) {
+					$ret = unlink $ent;
+					if ($ret > 0) {	
+						print "rm    $ent\n";
+						&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+						$cnt += 1;
+						$deleted += $size;
+					}
+				} else {  # Test mode
+					print "rm    $ent\n";
+					&Log($ent,$owner,$uid,$gid,$size,$atime,$mtime);
+					$cnt += 1;
+					$deleted += $size;
+				}
+				next;
+			}
+		}
+	}
+	close TOTAL_LIST or die "Error processing $FileList";
+	(! $TEST) && unlink $FileList;
+}
+
+
+#
+## Fork find operations to speed file list creation
+#
+sub finder {
+	if (my $pid = fork) {
+		# This is the parent code
+		# child process pid is available in $pid
+		$pids{$entry} = $pid;
+		$ForkCount++;
+		($ForkCount < $Width ) || wait;
+	} elsif (defined $pid) {  # $pid is zero here if defined
+		# This is the child code
+		# parent process pid is available with getppid
+		my $FileList = "$LogDir/filelist.$$";
+		#$ForkCount++;
+
+		open (SUB_LIST, "> $FileList") or
+			die "can't write to $FileList.$$: $!\n";
+		chmod 0640, $FileList;
+		chown '0', '0', $FileList;
+
+		my $SearchPath = "$Path/$entry";
+		File::Find::find({wanted => \&wanted}, $SearchPath);
+
+		# Finished processing, reduce the fork count by one and return
+		# to the cleanup manager.
+		$ForkCount--;
+		close SUB_LIST or warn "Error closing file list for $entry";
+		exit;
+	} elsif ($! =~ /No more process/) {
+		# EAGAIN, supposedly recoverable fork error
+		sleep 5;
+		redo &finder;
+	} else {
+		# weird fork error
+		die "Can't fork: $!\n";
+	}
+}
+
+
+#
+## Join the output from forked find processes
+#
+sub joiner {
+	# TOTAL_LIST is the combination of all directory lists
+	open (TOTAL_LIST, ">> $LogDir/FileList") or
+		die "Could not open file: $!";
+
+	for $entry (@entries) {
+		# wait for processes to terminate
+		if (my $pid = waitpid ($pids{$entry}, 0)) {
+			(-e "$LogDir/filelist.$pid") or next;
+			open (SUB_LIST, "sort -n -t: -k2,2 $LogDir/filelist.$pid |") or 
+				die "Could not open file: $! $LogDir/filelist.$pid";
+
+			while (<SUB_LIST>) {
+				print TOTAL_LIST "$_";
+			}
+			close SUB_LIST or warn "Error closing file list for $entry"; 
+			unlink "$LogDir/filelist.$pid";
+		} else {
+			print "Bad pid: $pid\n";
+			print "waitpid error: $?\n";
+		}
+	}
+	unlink glob("$LogDir/filelist.*");
+}
+
+
+#
+## Determine if the current entry belongs to an active DPCS job
+#
+sub DPCSchk {
+	my $ent = shift @_;
+	my ($jid, $ret, $ActiveList);
+	
+	$jid =~ s/$DPCSdir\/(\d*).*$/$1/;
+
+	if ($jid =~ /$ActiveList/) {	# See if already in active list
+		return 1;
+	} else {	# Check to see if active	
+		$ret = `pstat -n $jid`;
+
+		$ret =~ /Job +\d+ +not found/ && return 0;
+		
+		($ActiveList = "$ActiveList $jid") &&
+			return 1;
+	}
+}
+
+
+#
+## Print to cleanup logs
+#
+sub Log {
+	my ($file,$owner,$uid,$group,$size,$atime,$mtime) = @_;
+	chomp $file;
+
+	my $hl_gid;
+	
+	#
+	# Print to Run Log
+	#
+	print RLOG "$file\n";
+
+	#
+	# Print individual user logs
+	#
+	if ( $MkLogs =~ /[yY]/ ) {
+		# Establish a time stamp for the log
+		my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime( );
+		my $Year = 1900 + $year;
+		my $Month = 1 + $mon;
+
+		my $time_string = "$Month/$mday/$Year $hour:$min:$sec";
+
+		# Print to individual user log file
+		open (LOG, ">> $LogDir/$owner") ||
+			die "Can not open $LogDir/$owner $!\n";
+		chmod 0600, "$LogDir/$owner";
+
+		print LOG "[$time_string]  $file size: $size atime: $atime mtime: $mtime\n";
+
+		# Use hotline gid if hotline group exists
+		if ($hl_gid = getgrnam('hotline')) {
+			chown $uid, $hl_gid, "$LogDir/$owner";
+			chmod 0440, "$LogDir/$owner";
+		} else {
+			chmod 0400, "$LogDir/$owner";
+			chown $uid, $group, "$LogDir/$owner";
+		}
+		close LOG or warn "Error closing $LogDir/$owner";
+	}
+}
+
+
+#
+## Display usage message
+#
+sub usage() {
+	print STDERR << "EOF";
+Usage:
+cleanup {-acghlmt} [-f config_file] [-n global_node] [-N cluster_node]
+
+     -a  Include local, global and cluster filesystems.
+
+     -c  Include cluster filesystems.
+
+     -f  File to use instead of default cleanup.conf.
+
+     -g  Include global filesystems.
+
+     -h  This help message (default action).
+
+     -l  Include local filesystems.
+
+     -m  Check modification time only, ignore access time.
+
+     -n  Name of node responsible for global filesystem cleanup.
+	   (Skip global if hostname != global_node)
+
+     -N  Name of node responsible for cluster filesystem cleanup.
+	   (Skip cluster if hostname != cluster_node)
+
+     -t  Test mode, do not purge files.
+
+     -w  Maximum number of forked directory searches (default: $DefaultWidth).
+     
+     cleanup.conf - File which defines the filesystems to cleanup,
+			  and the rules to follow.
+     
+     Search Path: ., /admin/etc
+
+EOF
+
+	close LOCK;
+	if ( -f $LockFile ) { unlink $LockFile; }
+	exit;
+}
+
+
+#
+## Kill ancients
+#
+sub kill_ancients {
+	my $fname = $_[0] ;
+	my($dev,$ino,$mode,$nlink,$uid,$gid,$size,$atime,$mtime,$owner);
+
+	(($dev,$ino,$mode,$nlink,$uid,$gid,undef,$size,$atime,$mtime,
+		undef,undef,undef) = lstat($fname)) or return ;
+
+	(defined ($owner = getpwuid($uid))) or ($owner = $uid);
+
+	$cnt += 1;
+
+	my ($xkey, $ret);
+	my $xfile = "no";
+
+	if ($MaxNo eq "-" || $cnt <= $MaxNo ) {
+
+		# Skip standard system files
+		$fname =~ m#^.*/\.snapshot/?.*$# && return ;
+		$fname =~ m#^.*/\.nsr/?$# && return;
+
+		# Skip files on the exclution list
+		exists $excludeH{$fname} && return ;
+
+		# Skip files in pruned directorys
+		foreach my $pkey (keys %pruneH) {
+			$fname =~ m#^$pkey(/.*)*$# && return ;
+		}
+
+		# Process ancient files
+		if (! $TEST ) {
+			$ret = unlink $fname;
+			if ($ret > 0) {	
+				print "rm    $fname (ancient)\n";
+				&Log($fname,$owner,$uid,$gid,$size,$atime,$mtime);
+				$cnt += 1;
+				$deleted += $size;
+			}
+		} else {  # Test mode
+			print "rm    $fname (ancient)\n";
+			&Log($fname,$owner,$uid,$gid,$size,$atime,$mtime);
+			$cnt += 1;
+			$deleted += $size;
+		}
+		return;
+	}
+}

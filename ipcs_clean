@@ -1,0 +1,126 @@
+#! /usr/bin/perl -w
+#$Id: ipcs_clean 13 2012-02-08 16:06:31Z rohare $
+#$Source: /home/rohare/bin/RCS/ipcs_clean,v $
+#
+# Note: Requires Perl module Term::ReadKey
+#
+
+use strict;
+use vars qw/ %opt / ;
+use Term::ReadKey;
+use vars qw($opt_a $opt_h $opt_i $opt_u);
+
+$ENV{PATH} = "/bin:/usr/bin";	# Ensure a secure PATH
+$| = 1;
+
+my ($INTERACTIVE, $AUTO, $TargetUser);
+
+# Read command line options
+&init;
+
+#
+# ipcs command options
+my %rtypes = ("m", "Shared Memory Segment",
+		"s", "Semaphore Array",
+		"q", "Message Queue");
+
+
+#
+# Process active IPCS resources
+foreach my $rtype ("m", "s", "q") {
+	print "Processing $rtypes{$rtype}s\n";
+	my @ipclist = `ipcs -${rtype}`;
+	my $header = "";
+
+	foreach my $entry (@ipclist) {
+		chomp $entry;
+		my $GoodAnswer = '0';
+		my $ans;
+		my $del = '0';
+		($AUTO) && ($del = '1');
+
+		# Remove headers and blank lines
+		if ($entry =~ '^key') {
+			$header = "$entry";
+			next;
+		}
+		$entry =~ '^-----' && next;
+		$entry =~ '^$' && next;
+
+		my ($key,$rid,$owner,$remainder) = split (/[ 	]+/, $entry);
+
+		# Handle interactive usage
+		if ($INTERACTIVE) {
+			print "\n\t$header\n";
+			print "\t$entry\n";
+
+			ReadMode 'cbreak';
+			until ($GoodAnswer) {
+				print "\tRemove (Y/n): ";
+				$ans = ReadKey(0);
+				print "$ans\n";
+				($ans =~ /[Yy]/) && ($del = '1');
+				($ans =~ /[Nn]/) && ($del = '0');
+				($ans =~ /[YyNn]/) && ($GoodAnswer = '1');
+			}
+			ReadMode 'normal';
+		}
+
+		# Selected user mode
+		if ($opt_u) {
+			($TargetUser =~ $owner) && ($del = '1');
+		}
+
+		($del) && `ipcrm -$rtype $rid`;
+		($del) && print "\t$rid removed\n";
+		
+	}
+}
+
+
+#
+# Command line option processing
+sub init() {
+	use Getopt::Std;
+
+	getopts('ahiu:') or die "Error reading command options: $!";
+
+	# Ensure proper usage
+	(! $opt_a && ! $opt_h && ! $opt_i && ! $opt_u) && &usage();
+	($opt_a) && ($opt_h or $opt_i or $opt_u) && &usage();
+	($opt_i) && ($opt_a or $opt_h or $opt_u) && &usage();
+	($opt_u) && ($opt_a or $opt_h or $opt_i) && &usage();
+
+	# Automatic mode
+	($opt_a) && ($AUTO = 1);
+
+	# Display usage help
+	($opt_h) && &usage();
+
+	# Run in interactive mode
+	($opt_i) && ($INTERACTIVE = 1);
+
+	# Selected user mode
+	($opt_u) && ($TargetUser = $opt_u);
+}
+
+
+# Message about this script and how to use it
+sub usage() {
+	print STDERR << "EOF";
+
+This script is used to cleanup IPCS resources.
+
+  ipcs_clean {-a | -h | -i | -u userid}
+
+      -a    Automatically delete all IPCS resources.
+
+      -h    This help message
+
+      -i    Run in interactive mode.
+
+      -u   Remove resources owned by specified user.
+
+EOF
+	exit;
+}

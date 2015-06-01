@@ -1,0 +1,19 @@
+#!/usr/bin/perl -w
+#
+# kill_defunct
+#
+# Kill defunct processes
+
+open (PS, "ps -e -o pid,ppid,comm |") ;
+
+while (<PS>) {
+	my ($line, $pid, $ppid, $comm);
+	$line = $_;
+	$line =~ /kill_defunct/ && next;
+	if ($line =~ /defunct/) {
+		$line =~ s/^\s+//g;
+		($pid, $ppid, $comm) = split(/\s+/, $line);
+		print "$line\n";
+		kill 9, $ppid;
+	}
+}

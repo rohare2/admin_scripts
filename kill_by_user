@@ -1,0 +1,13 @@
+# kill_by_user
+
+if [ $# -ne 1 ]; then
+	exit
+fi
+
+user_name=$1
+
+pids=`ps -u $user_name | grep -v TIME | awk '{ print $1}'`
+
+for i in ${pids}; do
+	kill -9 $i
+done

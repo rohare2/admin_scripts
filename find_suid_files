@@ -1,0 +1,1 @@
+find / /usr /var -xdev ! -type d \( -perm -2000 -o -perm -4000 \)

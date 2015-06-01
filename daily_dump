@@ -1,0 +1,35 @@
+#!/usr/bin/perl
+#
+# daily_dump
+#
+# Run from cron to get daily dumps of every file system.
+# The dumps are stored to disk files in location $DIR.
+
+# Dump directory
+$MPT = "/mnt/spare";
+$DIR = "$MPT/dump_files";
+
+# Mount dump directory
+#`/bin/mount -t ext2 /dev/sda1 $MPT`;
+
+# Setup weekday hash
+%WD = ("Sat", 1, "Sun", 3, "Mon", 2, "Tue", 5, "Wed", 4, "Thu", 7, "Fri", 6);
+
+# Determine todays dump level
+$day = `date +%a`;
+chomp($day);
+$lvl = $WD{$day};
+
+# Get a list of file systems
+@FS = sort(`df`);
+
+foreach (@FS) {
+	if (/dev/ && ! /sda/ && ! /hde5 /) {
+		@fields = split(/\s+/);
+		($FN = $fields[0]) =~ s/\/dev\///;
+		$cmd = "/sbin/dump -$lvl"."u -f $DIR/$FN"."-$lvl\.dump $fields[0]";
+		`$cmd`;
+		}
+}
+#system("/bin/sync");system("/bin/sync");system("/bin/sync");
+#`/bin/umount $MPT`;

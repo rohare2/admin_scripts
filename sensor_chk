@@ -1,0 +1,11 @@
+#!/usr/bin/perl
+
+@ans = `sensors -f`;
+
+foreach $line (@ans) {
+	chomp($line);
+	if ($line =~ 'ALARM') {
+		`logger -p local3.warning -- "$line"`;
+		`sensors -f | mail -s "Sensor Report" root`; 
+	}
+}

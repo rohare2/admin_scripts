@@ -1,0 +1,102 @@
+#!/usr/bin/perl
+#
+# Copyright 2000 Daniel Klein, dvk@lonewolf.com - Unlimited distribution and
+# use permitted as long as this copyright notice is included in all copies.
+#
+# Check /etc/passwd for problems.
+#
+
+# Hotline group
+$HOTLINE = "800";
+
+# Start by opening /etc/passwd for reading
+#
+open(PWD, "/etc/passwd") || die "Cannon read /etc/passwd!\n";
+#
+# Simple subroutine that prints the header the first time it is called, and
+# never again after that - which means that if there are no errors, then
+# *nothing* is printed (which is good for quiet, but bad unless you are
+# *sure* that the program is being run when you want it to :-)
+sub msg {
+	print "\nChecking /etc/passwd:\n"  unless $header++;
+	print @_, "\n";
+	}
+
+#
+# Check list of authorized root accounts
+#
+open(RLST, "/usr/admin/etc/root_user_lst") ||
+	die "Cannon read /usr/admin/etc/root_user_lst!\n";
+	 
+while (<RLST>) {
+	chomp;
+	$rlogin{$_}++ ;
+ }
+close RLST;
+
+while (<PWD>) {
+	#
+	# Remove trailing newline, and split up the input, delimited by colons.
+	# Perl documentation: you may think we can use -aF: on the command line,
+	# but this won't work, because unless you specify a limit field, split
+	# throws away trailing empty fields - and we need to count them!
+	#
+	chomp;
+	@F = split /:/, $_, -1;
+	#
+	# This is the main work - the error messages explain what each test is
+	# looking for the input line.
+	#
+	/^\s*$/			&&
+		do {
+			msg "Line $. is a blank line";
+			next;
+			};
+
+	@F != 7			&&
+		do {
+			msg "Line $. has the wrong number of fields";
+			next;
+			};
+
+	$F[0] =~ /\W/	&&
+		msg "User '$F[0]' has non-alphanumeric charachters";
+
+	length($F[0]) > 12 &&
+		msg "User '$F[0]' has more than 8 characters";
+
+	$login{substr($F[0],0,8)}++ &&
+		msg "User '$F[0]' is not unique (past 8 characters)";
+
+	unless (($F[2] == 0) || ($F[3] == $HOTLINE)) {
+		$uid{$F[2]}++	&&
+			msg "User '$F[0]' shares UID $F[2] with another user";
+	}
+
+	length($F[1]) == 0	&&
+		msg "User '$F[0]' has no password";
+
+	length($F[1]) != 13 && (length($F[6]) == 0 && $F[6] =~ /sh$/) &&
+		msg "Login '$F[0]' is off, but still has a valid shell";
+
+	unless ($rlogin{$F[0]}) {
+		$F[2] == 0 && $F[0] ne "root" &&
+			msg "User '$F[0]' has a user-id of 0 (so he's root!)";
+	}
+
+	$F[2] < 0  &&
+		msg "User '$F[0]' has a negative UID";
+
+	$F[3] < 0 &&
+		msg "User '$F[0]' has a negative GID";
+
+if (length($F[1]) == 13) {
+	PWD: foreach $p ($F[0], split(/\W+/, $F[4])) {
+		if (crypt(lc($p), substr($F[1], 0, 2)) eq $F[1] ||
+			crypt(reverse(lc $p), substr($F[1], 0, 2)) eq $F[1]) {
+				msg "User '$F[0]' has an easily guessed password";
+				last PWD;
+				}
+		}
+	}
+}

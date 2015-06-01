@@ -1,0 +1,84 @@
+#! /bin/bash
+#$Id: chkconfiger 13 2012-02-08 16:06:31Z rohare $
+#$URL: file:///usr/local/svn/admin/scripts/chkconfiger $
+#
+# chkconfiger will run chkconfig agains the supplied
+# chkconfig.lst.
+
+ADMIN=/usr/local/admin
+
+# Find a chkconfig.lst file to use
+if [ -f ${ADMIN}/etc/chkconfig.lst ]; then
+	CHKLIST=${ADMIN}/etc/chkconfig.lst
+elif [ -f ./chkconfig.lst ]; then
+	CHKLIST=./chkconfig.lst
+else
+	echo "Error: No chkconfig.lst"
+fi
+echo $CHKLIST
+	
+# Read through chkconfig.lst and process entries
+while read entry ; do
+	# Disgard non-service entries
+	count=`echo $entry | grep -c -e "xinetd based services"`
+	if (( $count > 0 )); then
+		continue
+	fi
+
+	# Determine service type
+	service=`echo $entry | cut -d" " -f 1`
+	count=`echo $service | grep -c :`
+
+	if (( $count == 0 )); then	# Regular RC services
+
+		# Reset service to defaults in init file
+		chkconfig $service reset
+
+		rl1=`echo $entry | cut -d" " -f 3`
+		rl2=`echo $entry | cut -d" " -f 4`
+		rl3=`echo $entry | cut -d" " -f 5`
+		rl4=`echo $entry | cut -d" " -f 6`
+		rl5=`echo $entry | cut -d" " -f 7`
+		
+		for status in off on ; do
+			levels=""
+			# Determine run levels
+			if [[ ${rl1} == "1:${status}" ]]; then
+				levels="${levels}1"
+			fi
+
+			if [[ ${rl2} == "2:${status}" ]]; then
+				levels="${levels}2"
+			fi
+
+			if [[ ${rl3} == "3:${status}" ]]; then
+				levels="${levels}3"
+			fi
+
+			if [[ ${rl4} == "4:${status}" ]]; then
+				levels="${levels}4"
+			fi
+				
+			if [[ ${rl5} == "5:${status}" ]]; then
+				levels="${levels}5"
+			fi
+			
+			# Run chkconfig
+			if [[ $levels != "" ]]; then
+				chkconfig --level ${levels} ${service} ${status}
+			else
+				continue
+			fi
+		done
+
+	elif (( $count == 1 )); then	# inetd services
+		# inetd services
+		service=`echo $service | sed 's/://'`
+		status=`echo $entry | cut -d" " -f 2`
+		chkconfig $service $status
+
+	else
+		continue
+	fi
+		
+done < ${CHKLIST}

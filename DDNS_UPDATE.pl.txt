@@ -1,0 +1,279 @@
+#! /usr/bin/perl -w
+
+###############################################################
+#
+# Copyright (C) 2003 Philip Lawrence <www.amazingcs.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# version 1.1 ddns_update.pl for systems with an ethernet router
+# (WGR614 specifically, but it is easily changed to work with others)
+#
+# This allows a system to have an ethernet router, with port
+# forwarding, and a server hidden behind the router firewall.
+#
+# this version uses curl to get the router status info, then uses that
+# ip to update one or more domains on the server.
+#
+# The servers hidden behind the firewall can use dynamic or static
+# ip addresses assigned by the router, as long as the router can
+# route to them with port forwarding.
+#
+# The router status command, domain names, userids, and passwords
+# are hidden in a secret file (which is checked at runtime).
+#
+# The secret file can contain user id's and passwords for different
+# users, and for multiple domains
+#
+# A log file is appended to after completion of the update command
+#
+###############################################################
+
+use Date::Format;
+
+$verbose = 'false';
+#$verbose = 'true';
+
+$debug = 'false';
+#$debug = 'true';
+
+if ($debug eq 'true') {
+	$verbose = 'true';
+}
+
+$ruid = '';
+$rpwd = '';
+$cuid = '';
+$cpwd = '';
+$rurl = '';
+@domain = ();
+
+my $indx = 0;
+my @lines = ();
+my $tmpstr;
+
+$CFGDIR = '/etc/changeip';
+$LOGFILE = '/var/log/cip.log';
+$DNSSERVER = 'www.changeip.com:443';
+
+sub nextline
+{
+	if ($indx > $#lines) {
+		return '';
+	}
+	chomp($tmpstr = $lines[$indx++]);	
+	while($tmpstr eq '') {
+		if ($indx > $#lines) {
+			return '';
+		}
+		chomp($tmpstr = $lines[$indx++]);
+	}
+	return $tmpstr;
+}
+
+sub get_secret_lines
+{
+	$tmpstr = nextline();
+	($dstr) = ($tmpstr =~ /\s*([\w:\-.]*)\s*/);
+
+	@domain = split(/:/,$dstr);
+
+	$tmpstr = nextline();
+	($cuid) = ($tmpstr =~ /\s*(\w*)\s*/);
+
+	$tmpstr = nextline();
+	($cpwd) = ($tmpstr =~ /\s*(\w*)\s*/);
+
+	if ($#domain >= 0 && $cuid ne '' && $cpwd ne '') {
+		if ($verbose eq 'true') {
+			print "dstr - $dstr\n";
+			print "cuid - $cuid\n";
+			print "cpwd - $cpwd\n\n";
+		}
+		return 'true';
+	}
+	else {
+		return 'false';
+	}
+}
+
+sub get_router_ip
+{
+	my $line = '';
+	my @lines;
+	my $cnt = 0;
+
+	@lines = `/usr/bin/curl -s -S --user $ruid:$rpwd $rurl | grep -A 1 "IP Address"`;
+
+	if ($#lines < 1) {
+		sleep(1);
+
+		# try again before giving up
+		@lines = `/usr/bin/curl -s -S --user $ruid:$rpwd $rurl | grep -A 1 "IP Address"`;
+
+		if ($#lines < 1) {
+			print "unable to get the router ip\n";
+			print "lines returned:\n";
+			print "@lines\n";
+			exit 1;
+		}
+	}
+
+	if ($verbose eq 'true') {
+		print "router line: $lines[1]\n\n";
+	}
+
+	$_ = $lines[1];
+	($line) = ($lines[1] =~ /[\s\w]*>([\w.]*)<\w*/);
+
+	if ($verbose eq 'true') {
+		print "router_ip: $line\n\n";
+	}
+
+	return $line;
+}
+
+sub get_ns_ip
+{
+	my $str = '';
+	my $dnsstr = `host $_[0]`;
+
+	($str) = ($dnsstr =~ /(\S+)\n?$/);
+
+	if ($verbose eq 'true') {
+		print "domain: $_[0] ns_ip: $str\n\n";
+	}
+
+	return $str;
+}
+
+sub update_ns
+{
+	my $successstr = 'Successful Update!';
+	my $ip = $_[0];
+	my $dname = $_[1];
+
+	if ($verbose eq 'true') {
+		print "update_ns - router_ip: $ip dname: $dname\n\n";
+	}
+	
+	my $getstring = "GET /update.asp?u=$cuid&p=$cpwd&cmd=update&hostname=$dname&ip=$ip";
+	my $cmd = qq~echo "$getstring" | openssl s_client -quiet -connect $DNSSERVER 2>&1~;
+
+	# run the update command
+
+	if ($verbose eq 'true') {
+		print "updating dns server with command:\n";
+		print "$cmd\n\n";
+	}
+	
+	if ($debug eq 'false') {
+		my @output = `$cmd | grep "<ResultText>" | grep "$successstr"`;
+	}
+
+	if ($verbose eq 'true') {
+		print "response from cmd:\n";
+		print "$output[0]\n\n";
+	}
+	
+	open(LOGFIL, ">>$LOGFILE");
+	print LOGFIL time2str("%D %H:%M", time()) . "\n";
+
+	if (index($output[0],$successstr) >= 0) {
+		print LOGFIL "$successstr for domain name: $dname domain ip: $router_ip\n";
+	}
+	else {
+		print LOGFIL "update failed for domain name: $dname domain ip: $router_ip\n";
+	}
+
+	close(LOGFIL);
+}
+
+sub update_user_domains
+{
+	$router_ip = get_router_ip();
+
+	foreach my $tname (@domain)
+	{
+		$ns_ip = get_ns_ip($tname);
+
+		# only modify the ddns ip address if it has changed
+		if ($router_ip ne $ns_ip) {
+			update_ns($router_ip,$tname);
+		}
+		else {
+			if ($verbose eq 'true') {
+				print "bypass update for domain $tname\n\n";
+			}
+			open(LOGFIL, ">>$LOGFILE");
+			print LOGFIL time2str("%D %H:%M", time()) . "\n";
+			print LOGFIL "bypass update for domain $tname\n";
+			close(LOGFIL);
+		}
+	}
+}
+
+# this file MUST be owned by root with mode 600
+my $sfile = "$CFGDIR/changeip.secret";
+
+my $statstr = `stat -c "%U %a" $sfile`;
+my $dstr = '';
+
+($statstr ne 'root 600') or
+	die "$sfile MUST be set to mode 600 and root";
+
+# the format of the secrets file is:
+#
+# url to the router status. ie: (http://<router ip address>/s_status.htm)
+# router user id
+# router password
+#
+# colon separated list of domain names for user1.
+#   ie: (domain1.com:www.domain1.com:domain2.com:ftp.domain2.com)
+# changeip account user id
+# changeip account password
+#
+# colon separated list of domain names for user2.
+#   ie: (domain3.com:www.domain3.com:domain4.com:ftp.domain4.com)
+# changeip account user id
+# changeip account password
+#
+
+open(IN, "<$sfile") or die "unable to open $sfile";
+@lines = <IN>;
+close(IN);
+
+# get the router status url, userid, and password
+
+$tmpstr = nextline();
+($rurl) = ($tmpstr =~ /\s*([\w:.\/]*)\s*/);
+
+$tmpstr = nextline();
+($ruid) = ($tmpstr =~ /\s*(\w*)\s*/);
+
+$tmpstr = nextline();
+($rpwd) = ($tmpstr =~ /\s*(\w*)\s*/);
+
+if ($verbose eq 'true') {
+	print "rurl - $rurl\n";
+	print "ruid - $ruid\n";
+	print "rpwd - $rpwd\n\n";
+}
+
+# get each users domains, userid, and password, and process the update
+
+my $ret = get_secret_lines();
+
+while ($ret eq 'true') {
+	update_user_domains();
+	$ret = get_secret_lines();
+}
+

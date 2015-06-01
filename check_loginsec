@@ -1,0 +1,140 @@
+#!/usr/bin/perl -lanF:
+#
+# Check /etc/passwd and home directories for problems.  The switches in the
+# first line do this:
+#	-l	automatically chomp input, automatic \n after each output
+#	-a	autosplit input into the array @F
+#	-n	put a loop around the code below, reading lines from ARGV
+#	-F:	when autosplitting, use ':' as field delimiter
+#
+# Start by forcing automatic read to get data from /etc/passwd
+#
+BEGIN {
+    @ARGV = ("/etc/passwd");
+    }
+#
+# Simple subroutine that prints the header the first time it is called, and
+# never again after that - which means that if there are no errors, then
+# *nothing* is printed (which is good for quiet, but bad unless you are
+# *sure* that the program is being run when you want it to :-)
+#
+sub msg {
+    print "Checking login/email security:\n"	unless $header++;
+    print @_;
+    }
+#
+# Check list of authorized root accounts
+#
+open(RLST, "/usr/admin/etc/root_user_lst") ||
+        die "Cannon read /usr/admin/etc/root_user_lst!\n";
+ 
+while (<RLST>) {
+        chomp;
+        $rlogin{$_}++ ;
+ }
+close RLST;
+#
+# This is the main work - the error messages explain what each test is
+# looking for in the input line.
+#
+if (length($F[1]) == 13 && -d $F[5]) {
+    my ($mode, $uid) = (stat("$F[5]"))[2,4];
+    $uid != $F[2] && (! $rlogin{$F[0]}) &&
+	msg "User '$F[0]' home directory $F[5] is not owned by $F[0]";
+    $mode & 020	&&
+	msg "User '$F[0]' home directory $F[5] is group writeable";
+    $mode & 002	&&
+	msg "User '$F[0]' home directory $F[5] is world writeable";
+    }
+#
+# The mere presence of a .rhosts file is dangerous.  If it contains a '+',
+# we're really in trouble.
+#
+if (-e "$F[5]/.rhosts") {
+    msg "~$F[0]/.rhosts file found";
+    `fgrep + $F[5]/.rhosts`	&&
+	msg "~$F[0]/.rhosts file has a '+' in it!";
+    }
+#
+# Some files need to be owned by the user, and not writeable by anyone else
+#
+FILE: for my $file (qw(.cshrc .profile .bashrc .bash_profile .tcshrc
+		.login .logout .zshenv .zprofile .zlogin .zlogout
+		.emacs .emacsrc .exrc .forward .rhosts .netrc .ssh)) {
+    if (-e "$F[5]/$file") {
+	my ($mode, $uid) = (stat("$F[5]/$file"))[2,4];
+	if ($F[6]) {
+		$uid != $F[2] && $uid != 0 && (! $rlogin{$F[0]}) &&
+	   	 msg "~$F[0]/$file is not owned by $F[0]";
+	}
+	$mode & 020	&&
+	    msg "~$F[0]/$file is group writeable";
+	$mode & 002	&&
+	    msg "~$F[0]/$file is world writeable";
+	}
+    }
+#
+# Some files should not even be readable by anyone else
+#
+FILE: for my $file (qw(.rhosts .netrc .ssh)) {
+    if (-e "$F[5]/$file") {
+	my ($mode, $uid) = (stat("$F[5]/$file"))[2,4];
+	$mode & 040	&&
+	    msg "~$F[0]/$file is group readable";
+	$mode & 004	&&
+	    msg "~$F[0]/$file is world readable";
+	}
+    }
+#
+# Do some rudimentary checking of login scripts
+#
+FILE: for my $file (qw(.cshrc .profile .bashrc .bash_profile .tcshrc
+		.login .logout .zshenv .zprofile .zlogin .zlogout .klogin)) {
+    if (-e "$F[5]/$file") {
+	#
+	# If the UID is less than 100 (a probably privileged account), then
+	# do an heuiristic scan of the file to check if "." is in the path.
+	# NOTE: This is an heuristic, and does a "good" job of *guessing*.
+	# The only way to realy do this is actually use the shell to parse
+	# the file, but this is a huge security risk, so we guess
+	#
+	if ($F[2] <= 100) {
+	    unless (open (FD, "$F[5]/$file")) {
+		msg "Can't open ~$F[0]/$file to check for flaws";
+		next FILE;
+		}
+	    LINE: while (<FD>) {
+		#
+		# Handle "continued" lines (lines that end in "\")
+		#
+		if (s/\\$//) {
+		    $_ .= <FD>;
+		    redo LINE;
+		    }
+		#
+		# Ignore any line that doesn't mention path in UPPER/lower case
+		# and a '.'  If it has both, though, that is suspicious!  NOTE
+		# that we say "\bpath\b" which means "the word path", so that
+		# we do not accidentally match "cdpath" or other csh variables
+		#
+		if (/^[^#]*\bpath\b[^#]+\./i) {
+		    msg "~$F[0]/$file may set PATH which includes '.'";
+		    next FILE;
+		    }
+		}
+	    }
+	}
+    }
+#
+# Finally, check mailbox vulnerability
+#
+FILE: for my $file ("/var/mail/$F[0]", "/var/mail/.$F[0].pop") {
+    if (-e "$file") {
+	my @STAT = stat("$file");
+	my ($mode, $uid, $gid) = (stat("$file"))[2,4,5];
+	$uid != $F[2]	&&
+	    msg "$file is not owned by $F[0]";
+	($mode & 077 && $gid != 12) || $mode & 007 && 
+	    msg "$file can be accessed by other than $F[0]";
+	}
+    }

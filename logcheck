@@ -1,0 +1,121 @@
+#!/usr/bin/perl
+#
+# $Id: logcheck 13 2012-02-08 16:06:31Z rohare $
+#
+
+# Configurable parameters
+$LOGDIR='/var/log' ;
+$LOGCHKDIR='/var/tmp/logcheck';
+$ADMSCRIPTS='/usr/admin/scripts';
+
+# *** Check messages log ***
+
+# Save a copy of the message file for future comparison
+if ( ! -e "$LOGCHKDIR/messages" || (stat("$LOGCHKDIR/messages"))[7]
+	> (stat("/var/log/messages"))[7]) {
+	system( "cp -p $LOGDIR/messages $LOGCHKDIR/messages");
+}
+
+# diff the current and saved message file
+system("diff $LOGDIR/messages $LOGCHKDIR/messages > /tmp/TMPw");
+
+# Copy current messages file to logckdir
+system( "cp -p $LOGDIR/messages $LOGCHKDIR/messages");
+
+# Open the diff file
+open(LOG,"/tmp/TMPw") ||
+	die "Sorry, I couldn't open /tmp/TMPw.";
+
+while (<LOG>) {
+	chop;
+	if (/PAM_pwdb.*authentication failure/) {
+		$auth_fail_cnt+=1;
+	}
+
+	if (/ipop3d.*AUTHENTICATE LOGIN failure/ || /ipop3d.*Login failure/) {
+		$ipop3_cnt+=1;
+	}
+
+	if (/syslog.*shutdown/ || /syslog.*start/) {
+		$syslog_cnt+=1;
+	}
+
+	if (/inetd.*shutdown/ || /inetd.*start/) {
+		$inetd_cnt+=1;
+	}
+
+	if (/Fwd connection.*refused/i) {
+		$fwd_cnt+=1;
+	}
+
+	if (/FAILED LOGIN SESSION/) {
+		$login_cnt+=1;
+	}
+
+	if (/ntpd.*error/i) {
+		$ntpd_cnt+=1;
+	}
+
+	if (/I\/O error/) {
+		$ioerr_cnt+=1;
+	}
+
+	if (/192\.168\.1\.35:111/) {
+		$local_portscan_cnt+=1;
+	}
+
+	if (/69\.226\.142\.78:111/) {
+		$dvcal_portscan_cnt+=1;
+	}
+
+	if (/failure/i) {
+		$k_fail_cnt+=1;
+	}
+
+	if (/error/i) {
+		$k_err_cnt+=1;
+	}
+
+	if (/warning/i) {
+		$k_warn_cnt+=1;
+	}
+}
+close(LOG);
+
+if ( -e "/tmp/TMPw" ) {
+	printf "    Messages Log Report\n";
+	printf "Found [%3d] PAM_pwdb: authentication failures\n",
+		$auth_fail_cnt;
+	printf "Found [%3d] ipop3d: Login failures\n", $ipop3_cnt;
+	printf "Found [%3d] syslog start/stop\n", $syslog_cnt;
+	printf "Found [%3d] inetd start/stop\n", $inetd_cnt;
+	printf "Found [%3d] Fwd connection refused\n", $fwd_cnt;
+	printf "Found [%3d] Failed Login Session\n", $login_cnt;
+	printf "Found [%3d] ntpd errors\n", $ntpd_cnt;
+	printf "Found [%3d] I/O errors\n", $ioerr_cnt;
+	printf "Found [%3d] Warnings\n", $warning_cnt;
+	printf "Found [%3d] Local portmapper scans\n", $local_portscan_cnt;
+	printf "Found [%3d] DVCAL portmapper scans\n", $dvcal_portscan_cnt;
+	printf "Found [%3d] Failures\n", $k_fail_cnt;
+	printf "Found [%3d] Errors\n", $k_err_cnt;
+	printf "Found [%3d] Warnings\n", $k_warn_cnt;
+
+	system("rm /tmp/TMPw");
+}
+
+while ( $filename = </*> ) {
+	($uid) = (stat("$filename"))[4];
+	if ("$uid" != 0) {
+		printf "\nOwner of filename %s should be root,\n", $filename;
+		printf "or %s does not belong in the root directory.\n\n",
+			$filename;
+	}
+}
+
+system("$ADMSCRIPTS/check_passwd");
+system("$ADMSCRIPTS/check_group");
+system("$ADMSCRIPTS/check_badsu");
+system("$ADMSCRIPTS/check_loginsec");
+system("$ADMSCRIPTS/whodosu");
+system("$ADMSCRIPTS/smto -n 5");
+system("$ADMSCRIPTS/smreject");

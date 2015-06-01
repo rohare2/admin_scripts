@@ -1,0 +1,496 @@
+#!/usr/bin/perl -w
+#
+# $Id: kill_idle_users 13 2012-02-08 16:06:31Z rohare $
+# $URL: file:///usr/local/svn/admin/scripts/kill_idle_users $
+#
+# kill_idle_users
+#
+# By: Rich O'Hare
+#
+# This version of kill_idle_user is for Linux systems that use
+# the procps rpm. The IDLE time format can very with other
+# Linux/UNIX versions.
+#
+
+use strict;
+use vars qw/ %opt / ;
+
+$ENV{PATH} = "/bin:/usr/bin";    # Ensure a secure PATH
+$| = 1;
+
+# Configurable time limits in seconds
+my $tty_limit = "900";
+my $remote_limit = "3600";
+my $pts_limit = "3600";
+my $x_limit = "3600";
+my $minUse = ".0006";			# Ratio of CPU time to elapsed
+						# time as a minimum
+
+# Global Variables
+chomp(my $HOST=`hostname -s`);          # Define hostname
+my ($TEST,$VERBOSE,$ans,$DEST);
+my $StateFile = "/tmp/kiu_state";
+my $Dashes = '-' x 77;
+my $ps_options =
+	"-o pid,ppid,user,etime,time,tty,comm --sort tty --no-header";
+my $xstatus = "Unknown";
+
+# Read command line options.
+&init; 
+
+# Open the log file
+&open_log;
+
+# If testing, output to standard out, otherwise output to log
+($TEST) && ($DEST = \*STDOUT);
+(! $TEST) && ($DEST = \*LOG);
+
+# Identify the operating system
+my $OS = `uname -s`;
+chomp $OS;
+my ($who, $procps);
+
+# Don't continue unless this is a familiar operating system
+($OS eq "Linux") or die "Unknown Operating System type";
+
+# Identify the desktop
+my $desktop = &chk_desktop;
+
+# OS & Desktop specific configuration
+$OS eq "Linux" && &SetLinuxSyntax;
+
+# Make initial log entry
+&PrintHeader;   # Print report header
+
+# Load process records from previously saved state
+my %PreviousState = ();
+&LoadPreviousState;
+
+# Kill idle TTY sessions
+&KillIdleSessions("TTY");
+
+# Kill idle remote source logins
+&KillIdleSessions("Remote");
+
+# Kill idle local logins
+&KillIdleSessions("PTS");
+
+# If there are no active local pts processes:
+&KillIdleSessions("X");
+# 	a) Lock the screen during working hours
+# 	b) Log user out after hours
+
+# Save current process state and exit
+
+&SaveState or
+	die "Could not save process state: $!\n";
+
+exit;
+############## The End #############
+
+#
+## Subroutines
+#
+
+# Command line options processing
+sub init() {
+	use Getopt::Std;
+	my $opt_string = 'htv';
+	getopts( "$opt_string", \%opt ) or usage();
+
+	# Display usage help
+	usage() if $opt{h};
+
+	# Run in test mode
+	($TEST = 1) if $opt{t};
+
+	# Verbose mode
+	($VERBOSE = 1) if $opt{v};
+}
+
+
+# Message about this script and how to use it
+sub usage() {
+	print STDERR << "EOF";
+
+This program will kill idle user sessions.
+
+  kill_idle_users {-ht}
+
+	-h	This help message
+	-t	Test mode, do not kill processes or write logs
+	-v	Verbose mode
+
+	example: kill_idle_users -t
+
+EOF
+	exit;
+}
+
+
+# Establish log file
+sub open_log {
+	my $log;
+	if (-e "/usr/admin/reports/idle") {
+		$log = "/usr/admin/reports/idle/idle_logouts.${HOST}";
+	} else {
+		$log = "/var/log/idle_logouts";
+	}	
+
+	# Open the log file
+	open(LOG,">> $log") or
+		die "Could not open $log : $!\n";
+
+	chmod 0660, "$log";
+	chown '0', '0', $log;
+}
+
+
+# Determine which display manager is running
+sub chk_desktop {
+	# Local variables
+	my ($count);
+
+	# Determine which desktop manager is in use
+	$desktop = "";
+
+	# Test for GNOME
+	if ($desktop eq "") {
+		$count = `ps -eo comm | grep -c gnome-session`;
+		chomp $count;
+
+		($count < 2 ) or die
+			"Hmmm, there seems to be more than one gnome-session";
+
+		if ( $count == 1 ) {
+			$desktop = "GNOME";
+		} else {
+			$desktop = "";
+		}
+	}
+
+	# Test for KDE
+	if ($desktop eq "") {
+		$count = `ps -eo comm | grep -c startkde`;
+		chomp $count;
+
+		($count < 2 ) or die
+			"Hmmm, there seems to be more than one startkde"; 
+
+		if ( $count == 1 ) {
+			$desktop = "KDE";
+		} else {
+			$desktop = "";
+		}
+	}
+	($desktop eq "") && ($desktop = "None");
+	return $desktop;
+}
+
+
+# Define Linux command variables
+sub SetLinuxSyntax {
+	my ($count);
+
+	# Make sure we are running a supported version of procps
+	$procps = `rpm -q procps`;
+	chomp $procps;
+
+	$procps =~ m/package.*not installed/ &&
+		die "procps rpm not installed";
+		
+	$procps =~ m/^.*-(\d+)\.(\d+)\.(\d+)-?.*$/;
+
+	$procps = "procps-$1.$2.$3";
+
+	$who = "w -h | sed 's/\\([A-Z][a-z][a-z]\\) \\([0-9][ap]m\\)/ \\1\\2/'";
+}
+
+
+# Get previously saved list of processes and create hash of entries
+sub LoadPreviousState {
+	( -f $StateFile ) or `touch $StateFile`;
+	open(STATE_FILE,"< $StateFile") or
+		warn "Could not open StateFile: $!\n";
+
+	while (<STATE_FILE>) {
+		chomp;
+		my $line = $_;
+		$line =~ s/^\s+//;
+		my ($time,$tty,$login,$jcpu)
+			= split ('\s+', $line);
+	 	$PreviousState{$tty} = "$line";
+	}
+	close STATE_FILE;
+}
+
+
+# Save current process list to StateFile
+sub SaveState {
+	open(NEW_STATE_FILE, "> /tmp/.kiu_state" ) or
+		die "Can not open /tmp/.kiu_state for output: $!\n";
+
+	my @session_list = `$who`;
+
+	foreach my $line (@session_list) {
+		chomp($line);
+		$line =~ s/^\s+(.*)$/$1/;
+		
+		# New record
+		my ($user,$tty,$from,$login,$idle,$jcpu,$pcpu,$what) = split(/\s+/, $line);
+
+		my $time = time();
+		$line = "$time $tty $login $jcpu";
+
+		# Old record
+		if ($PreviousState{$tty}) {
+			my $oline = $PreviousState{$tty};
+
+			my ($otime,$otty,$ologin,$ojcpu)
+				= split(/\s+/, $oline);
+
+			if (w2sec($jcpu) == w2sec($ojcpu))  {
+				$line = "$otime $tty $login $jcpu";
+			}
+		}
+		print NEW_STATE_FILE "$line\n";
+	}
+
+	close NEW_STATE_FILE or
+		die "Could not close /tmp/.kiu_state : $!\n";
+
+	rename "/tmp/.kiu_state","$StateFile";
+}
+
+
+## Print report header
+sub PrintHeader {
+	my $time = scalar localtime, ;
+	my $time_period = &TimeChk;
+
+	print $DEST "$Dashes\n";
+	print $DEST "$HOST : $time - $time_period\n";
+	$VERBOSE && print $DEST "OS: $OS, Desktop: $desktop, $procps\n";
+}
+
+#
+## Time check
+#
+sub TimeChk {
+	my ($time,$time_period);
+
+	# Current time stamp
+	$time = scalar localtime, ;
+
+	my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)
+		= localtime(time);
+
+	if (($hour < 7 || $hour > 18) || ($wday == 0 || $wday == 6)) {
+		$time_period = "After normal work hours";
+	} else {
+		$time_period = "Normal work hours";
+	}
+	return $time_period;
+}
+
+
+# Convert idle time to seconds
+sub w2sec {
+	my $idle = "@_";
+	my ($days,$hours,$minutes,$seconds) = 0;
+
+	my $Total = 0;
+
+	if ($idle =~ /^.*s$/) {
+		$seconds = $idle;
+		$seconds =~ s/^(.*)s$/$1/;
+		$Total = $seconds;
+	}
+
+	if ($idle =~ /^\d+:\d+$/) {
+		$minutes = $seconds = $idle;
+		$minutes =~ s/^(\d+):.*$/$1/;
+		$seconds =~ s/^.*:(\d+)$/$1/;
+		$Total = ($minutes * 60) + $seconds;
+	}
+
+	if ($idle =~ /^.*m$/) {
+		$hours = $minutes = $idle;
+		$hours =~ s/^(\d+):\d+m$/$1/;
+		$minutes =~ s/^\d+:(\d+)m$/$1/;
+		$Total = ($hours * 3600) + ($minutes * 60);
+	}
+
+	if ($idle =~ /^.*days$/) {
+		$idle =~ s/^(\d+)days$/$1/;
+		$Total = $idle * 86400;
+	}
+
+	return $Total;
+}
+
+
+# Lock the X session desktop
+sub ScreenLock {
+	my ($search_string, $lock_cmd) = @_;
+	my $child = fork();
+
+	if ($child) {
+		my $line = `ps -eo user,comm | grep "$search_string"`;
+		my ($xuser, $command) = split (/\s+/, $line);
+
+		my @pw_entry = getpwnam($xuser);
+		my $uid = getpwnam($xuser);
+		((($< eq "0") || ($< eq $uid)) && ( $> = $uid )) or
+			warn "Must be root or X session owner\n";
+		
+		$ENV{DISPLAY}=":0.0";
+		$ENV{XAUTHORITY}="$pw_entry[7]/.Xauthority";
+		system("$lock_cmd");
+		exit;
+	}
+}
+
+
+# Find and kill idle sessions
+sub KillIdleSessions {
+	my ($type) = @_;	# TTY, Remote PTS or X
+	my %ttyH = ();
+	my @session_list = `$who`;
+	my $time = time();
+
+	my $limit;
+	($type eq "TTY") && ($limit = $tty_limit) && $VERBOSE &&
+		print $DEST "Find and kill idle $type sessions:\n";
+	($type eq "Remote") && ($limit = $remote_limit) && $VERBOSE &&
+		print $DEST "Find and kill idle $type sessions:\n";
+	($type eq "PTS") && ($limit = $pts_limit) && $VERBOSE &&
+		print $DEST "Find and kill idle local sessions:\n";
+	($type eq "X") && ($limit = $x_limit);
+	
+	# Idle terminal check
+	foreach my $line (@session_list) {
+		my ($user,$tty,$from,$login,$idle,$jcpu,$pcpu,$what) = split(/\s+/, $line);
+
+		# Filter for session type
+		if ($type eq "TTY") {
+			$tty =~ /^tty\d+/ or next ;
+		}
+
+		if ($type eq "Remote") {
+			($tty =~ /pts\/\d+/ && ($from =~ /^\w+.*/ ||
+			$from =~ /^\d+\.\d+\.\d+\.\d+/)) or next;
+		}
+
+		if ($type eq "PTS") {
+			($tty =~ /pts\/\d+/ && ($from eq "-" ||
+				$from =~ /^:0(\.\d+)?$/)) or next;
+		}
+
+		$type eq "X" && next;
+
+		# If tty has been idle longer than the limit mark it inactive.
+		if (w2sec($idle) > $limit) {
+			($ttyH{$tty} = "Inactive");
+		} else {
+			$VERBOSE && printf $DEST "\t%7s active\n",$tty;
+			($type eq "PTS") && ($xstatus = "Active");
+			next;
+		}
+
+		# If tty is accumulating cpu time mark it active
+		if ($PreviousState{$tty}) {
+			my $oline = $PreviousState{$tty};
+			my ($otime,$otty,$ologin,$ojcpu) = split(/\s+/, $oline);
+
+			($VERBOSE) && printf $DEST "\t%7s old: %10s %7s %6s\n",
+					$otty,$otime,$ologin,$ojcpu;
+
+			($VERBOSE) && printf $DEST "\t%7s new: %10s %7s %6s",
+					$tty,$time,$login,$jcpu;
+
+			if ((((w2sec($jcpu) - w2sec($ojcpu)) /
+			    (($time) - ($otime))) <= $minUse) && 
+	    		    (($time - $otime) >= $limit) &&
+			    ($ttyH{$tty} ne "Active") &&
+			    ($ologin eq $login)) {
+
+				$ttyH{$tty} = "Inactive";
+				$VERBOSE && print $DEST " - inactive\n";
+			} else {
+				($ttyH{$tty} = "Active");
+				$VERBOSE && print $DEST " - active\n";
+			}
+		}
+
+		# TTY and remote login session killer
+		if (($type eq "TTY") || ($type eq "Remote")) {
+			($ttyH{$tty} eq "Inactive") && &kill($tty);
+		}
+
+		# Local session status check 
+		if ($type eq "PTS") {
+			if ($ttyH{$tty} eq "Active") {
+				$xstatus = "Active";
+			} else {
+				($xstatus eq "Unknown") && ($xstatus = "Inactive");
+			}
+		}
+	}	
+
+	$type eq "X" && $xstatus eq "Active" && $VERBOSE &&
+		print $DEST "\tNothing to do, there are active sessions.\n";
+
+	# Idle local session handler
+	if ($xstatus eq "Inactive" && $type eq "X") {
+		if (&TimeChk eq "After normal work hours") {
+			my $pid = `ps --no-headers -C X -o pid`;
+
+			(print $DEST "\n\tKilling X session pid: $pid\n");
+			(! $TEST) && (my $cnt = kill 9, $pid);
+			if ( ($cnt) && ($cnt == 0)) {
+				print $DEST "\n\tError killing X session pid $pid\n";
+			}	
+
+		} else {			# Lock the screen during work hours
+			my ($search_string, $lock_cmd);
+
+			if ($desktop =~ /^GNOME$/) {
+				$search_string = "gnome-session";
+				$lock_cmd = "/usr/X11R6/bin/xscreensaver-command -lock &";
+			}
+
+			if ($desktop =~ /^KDE$/) {
+				$search_string = "startkde";
+				$lock_cmd = "/usr/bin/kdesktop_lock --forcelock";
+			}
+
+			if ($desktop =~ /^WMAKER$/) {
+				$search_string = " ";
+				$lock_cmd = "/usr/X11R6/bin/xlock -allowroot -usefirst";
+			}
+
+			print $DEST "\n\t$lock_cmd\n";
+			(! $TEST) && ScreenLock($search_string, $lock_cmd);
+		}
+	}
+}
+
+
+# The grim reaper
+sub kill() {
+	my $tty = "@_";
+	chomp $tty;
+	print $DEST "\tKilling inactive processes on $tty\n";
+	my @pids = `ps h -t $tty -o pid`;
+	foreach my $pid (@pids) {
+		chomp $pid;
+		(! $TEST) && (my $cnt = kill 9, $pid);
+		if ( ($cnt) && ($cnt == 0)) {
+			print $DEST "\tError killing process $pid on $tty\n";
+		} else {
+			my $entry = `ps h -p $pid -o pid,user,command`;
+			printf $DEST "\t\t%7s %s\n",$tty,$entry;
+		}	
+	}
+}

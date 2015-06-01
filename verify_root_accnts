@@ -1,0 +1,92 @@
+#!/usr/bin/perl -w
+#
+#$Id: verify_root_accnts 13 2012-02-08 16:06:31Z rohare $
+#$Source: /g/g0/rohare/src/RCS/verify_root_accnts,v $
+#
+# Perl script used to verify root accounts against a flat file
+# provided by the hotline.
+#
+# Gender attributes used:
+#	cluster - Used to determine user group.
+#
+#	example: gps19 GPS,cluster=compass,....
+#
+use strict;
+
+$ENV{PATH} = "/bin:/usr/bin:/sbin:/usr/local/bin";	# Ensure a secure PATH
+my $SOURCE = "/usr/global/admin/support/root/group_root.txt";
+my $HOST = `hostname -s`;
+chomp $HOST;
+my ($line, $node, $cluster);
+my (%root, %uid);
+
+# Make sure there is a genders file.
+open (GENDERS, "/etc/genders") or
+	die "/etc/genders: $!\n";
+close GENDERS;
+
+chomp ($cluster = `nodeattr -v cluster`);
+#chomp ($cluster = `/admin/scripts/nodeattr -v cluster`);
+(defined $cluster && print "Node is in cluster $cluster.\n") or 
+	die "Error: No entry for $HOST in /etc/genders";
+
+# See if there is a group_root.txt file.
+open (ROOTS, "$SOURCE") or
+	die "$SOURCE: $!\n";
+
+# Build root user hash from group_root.txt file.
+while (<ROOTS>) {
+	$line = $_;
+	$line =~ /^#/ || $line =~ /^Grouping/ && next;
+	my ($grouping,$machine_name,$root_username,$regular_username,
+		$official_id,$full_name,$sup_oun) = split(/\s+/, $line);
+
+	if ($machine_name =~ /^$cluster/) {
+		$root{$regular_username} = $root_username;
+	}
+}
+close ROOTS;
+
+# Build uid hash.
+while (my ($name, $passwd, $uid) = getpwent) {
+	$uid == 0 && ($uid{$name} = $uid);
+}
+
+# Determine the name of root group.
+my $root_grp = getgrgid 0;
+my($rname, $rpasswd, $rgid, $rmembers) = getgrnam $root_grp;
+my @root_member = split (/\s/, $rmembers);
+
+# Make a list of group root members.
+
+
+# See if there are any missing accounts.
+my $key;
+foreach $key (sort keys %root) {
+	my ($ans, $uid, $root_acnt, $rstatus);
+	($uid = getpwnam $key) ||
+		 print "Missing user account $key\n";
+
+	defined (getpwnam $root{$key}) ||
+		print "Missing root account $root{$key}\n";	
+	
+	$rmembers =~ $key || print "Missing $root_grp group member $key\n";
+
+}
+
+# See if there are any un-authorized root accounts.
+foreach my $uid_key (sort keys %uid) {
+	my $badu = 0;
+	if ($uid{$uid_key} == 0 && $uid_key ne 'root') {
+		foreach my $root_key (keys %root) {			
+			$root{$root_key} eq $uid_key && ($badu = 1);
+		}
+		$badu || print "Unauthorized root account $uid_key.\n";
+	}
+}
+
+foreach my $entry (@root_member) {
+	$entry =~ /root/ && next;
+	defined $root{$entry} ||
+		print "Unauthorized root group member $entry\n";
+}	
