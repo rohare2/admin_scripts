@@ -6,6 +6,7 @@ CONFIG_DIR= /usr/local/etc
 
 SCRIPT_FILES= aide_check \
 	aide_update \
+	check_passwd \
 	mysqldump.pl \
 	smart_disk_test
 
