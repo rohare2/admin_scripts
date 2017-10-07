@@ -16,7 +16,7 @@ while (( $rln > 1 )); do
 	rln=$((rln - 1))
 done
 if [ -f $LOG_FILE ]; then
-	mv $LOG_FILE ${LOG_FILE}.1
+	cp $LOG_FILE ${LOG_FILE}.1
 fi
 
 # Run aide check
