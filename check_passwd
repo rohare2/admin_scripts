@@ -25,7 +25,7 @@ sub msg {
 #
 # Check list of authorized root accounts
 #
-open(RLST, "/usr/admin/etc/root_user_lst") ||
+open(RLST, "/usr/local/etc/root_user_lst") ||
 	die "Cannon read /usr/admin/etc/root_user_lst!\n";
 	 
 while (<RLST>) {
@@ -59,14 +59,11 @@ while (<PWD>) {
 			next;
 			};
 
-	$F[0] =~ /\W/	&&
-		msg "User '$F[0]' has non-alphanumeric charachters";
+	length($F[0]) > 24 &&
+		msg "User '$F[0]' has more than 24 characters";
 
-	length($F[0]) > 12 &&
-		msg "User '$F[0]' has more than 8 characters";
-
-	$login{substr($F[0],0,8)}++ &&
-		msg "User '$F[0]' is not unique (past 8 characters)";
+	$login{substr($F[0],0,24)}++ &&
+		msg "User '$F[0]' is not unique (past 24 characters)";
 
 	unless (($F[2] == 0) || ($F[3] == $HOTLINE)) {
 		$uid{$F[2]}++	&&
