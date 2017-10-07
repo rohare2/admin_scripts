@@ -2,7 +2,7 @@
 # $Id: aide_check 9 2012-02-08 15:41:50Z rohare $
 # $URL: file:///usr/local/svn/admin/scripts/aide_check $
 
-LOG_DIR=/var/log
+LOG_DIR=/var/log/aide
 LOG_FILE=$LOG_DIR/aide.log
 RLN='9'
 rln=$RLN

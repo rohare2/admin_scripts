@@ -16,7 +16,7 @@ while (( $rln > 1 )); do
 	rln=$((rln - 1))
 done
 if [ -f $DB_FILE ]; then
-	mv $DB_FILE ${DB_FILE}.1
+	cp $DB_FILE ${DB_FILE}.1
 fi
 
 # Run aide update

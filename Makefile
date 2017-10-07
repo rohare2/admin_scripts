@@ -4,13 +4,10 @@
 SCRIPT_DIR= /usr/local/sbin
 CONFIG_DIR= /usr/local/etc
 
-SCRIPT_FILES= fix_svn_perms.sh \
+SCRIPT_FILES= aide_check \
+	aide_update \
 	mysqldump.pl \
-	mysql_ssl_setup.sh \
-	smart_disk_test \
-	snapbackup.sh \
-	StopIntruder \
-	StopPorn
+	smart_disk_test
 
 CONFIG_FILES= 
 
