@@ -20,6 +20,6 @@ if [ -f $LOG_FILE ]; then
 fi
 
 # Run aide check
-/usr/sbin/aide --check | mail -s "Aide Report" aide
+/usr/sbin/aide --check | mail -s "Aide Report" root
 #chown root:root $LOG_FILE
 #chmod 440 $LOG_FILE
