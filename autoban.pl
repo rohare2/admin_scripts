@@ -56,6 +56,7 @@ while (<FH>) {
 		$ipv4 eq '67.174.210.180' && next;
 		# exclude master
 		$ipv4 eq '192.168.1.20' && next;
+		$ipv4 eq '127.0.0.1' && next;
 
 		# check for an existing database entry
 		$found = checkDatabase($dt,$user,$ipv4);
