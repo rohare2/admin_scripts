@@ -58,6 +58,14 @@ while (<FH>) {
 		$ipv4 eq '192.168.1.20' && next;
 		$ipv4 eq '127.0.0.1' && next;
 
+		# accept group remote_users
+		my $remote_list = `getent group remote_users`;
+		chomp $remote_list;
+		$remote_list =~ s/^.*://;
+		if ( $remote_list =~ /$user(\@ohares\.us)?/ ) {
+			next;
+		}
+
 		# check for an existing database entry
 		$found = checkDatabase($dt,$user,$ipv4);
 
