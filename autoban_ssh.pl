@@ -1,6 +1,6 @@
 #!/bin/perl -w
 #
-# autoban.pl
+# autoban_ssh.pl
 
 use strict;
 use DBI;
@@ -17,8 +17,6 @@ my %attr = ( PrintError=>0,  # turn off error reporting via warn()
 
 my $dbh = DBI->connect($dsn,$username,$password, \%attr);
 
-my $file = "/var/log/secure";
-
 my %mon2num = qw(
 	jan 01  feb 02  mar 03  apr 04  may 05  jun 06
 	jul 07  aug 08  sep 09  oct 10 nov 11 dec 12
@@ -28,9 +26,10 @@ my %mon2num = qw(
 my $list = `firewall-cmd --permanent --info-ipset=blacklist`;
 chomp $list;
 
+# read through /var/log/secure file and process results
+my $file = "/var/log/secure";
 open ( FH, "<$file") || die "Can't open $file: $!\n";
 
-# read through log file and process results
 while (<FH>) {
 	my $line = $_;
 	my ($user,$ipv4);
@@ -70,7 +69,7 @@ while (<FH>) {
 		$found = checkDatabase($dt,$user,$ipv4);
 
 		# If there is no existing database entry create one
-		not($found) && updateDatabase($dt,$user,$ipv4);
+		not($found) && updateDatabase($dt,$user,$ipv4,'ssh');
 
 		# check for an existing blacklist entry
 		$found = 0;
@@ -105,10 +104,15 @@ sub updateDatabase {
 	my $dt = shift @_;
 	my $user = shift @_;
 	my $ipv4 = shift @_;
+	my $service = shift @_;
+	$host =~ s/\..*//;
+
 	$dbh->do("INSERT INTO autoban SET 
 		date = '$dt',
 		user = '$user',
-		ipv4 = INET_ATON('$ipv4')");
+		ipv4 = INET_ATON('$ipv4'),
+		service = '$service',
+		host = '$host'");
 	return;
 }
 
