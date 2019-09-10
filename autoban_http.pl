@@ -6,8 +6,8 @@ use strict;
 use DBI;
 
 # MySQL database connection
-my $host = "master.ohares.us";
-my $dsn = "DBI:mysql:it_ops;host=$host";
+my $dbhost = "master.ohares.us";
+my $dsn = "DBI:mysql:it_ops;host=$dbhost";
 my $username = "autoban";
 my $password = 'Fluticasone';
 
@@ -27,13 +27,14 @@ my $list = `firewall-cmd --permanent --info-ipset=blacklist`;
 chomp $list;
 
 # read through /etc/httpd/logs/error_log file and process results
-my $file = "/etc/httpd/logs/error_log-20190901";
+my $host = `uname -n`;
+my $file = "/etc/httpd/logs/error_log";
 open ( FH, "<$file") || die "Can't open $file: $!\n";
 
 while (<FH>) {
 	my $line = $_;
 	my $user = '';
-	if ( $line =~ 'ModSecurity: Access denied with code 403' ) {
+	if ( $line =~ 'failed:' ) {
 		my @line = split(' ', $line);
 		my $year = `date '+%Y'`;
 		chomp $year;
@@ -68,6 +69,7 @@ while (<FH>) {
 		not($found) && updateBlacklist($ipv4); 
 	}
 }
+
 $dbh->disconnect();
 
 sub checkDatabase {

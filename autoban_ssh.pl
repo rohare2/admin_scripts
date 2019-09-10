@@ -6,8 +6,8 @@ use strict;
 use DBI;
 
 # MySQL database connection
-my $host = "master.ohares.us";
-my $dsn = "DBI:mysql:it_ops;host=$host";
+my $dbhost = "master.ohares.us";
+my $dsn = "DBI:mysql:it_ops;host=$dbhost";
 my $username = "autoban";
 my $password = 'Fluticasone';
 
@@ -27,6 +27,7 @@ my $list = `firewall-cmd --permanent --info-ipset=blacklist`;
 chomp $list;
 
 # read through /var/log/secure file and process results
+my $host = `uname -n`;
 my $file = "/var/log/secure";
 open ( FH, "<$file") || die "Can't open $file: $!\n";
 
