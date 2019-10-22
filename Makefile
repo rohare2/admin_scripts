@@ -4,9 +4,21 @@
 SCRIPT_DIR= /usr/local/sbin
 CONFIG_DIR= /usr/local/etc
 
-SCRIPT_FILES= check_passwd \
-	mysqldump.pl \
-	smart_disk_test
+SCRIPT_FILES= access_request.pl \
+	autoban_http.pl \
+	autoban_ssh.pl \
+	check_loginsec \
+	check_passwd \
+	cleanup \
+	dec2ip.sh \
+	find_suid_files \
+	ip2dec.sh \
+	ipcs_clean \
+	kill_by_user \
+	kill_defunct \
+	kill_idle_users \
+	sar_plot \
+	sensor_chk
 
 CONFIG_FILES= 
 

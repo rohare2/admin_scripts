@@ -26,7 +26,7 @@ sub msg {
 # Check list of authorized root accounts
 #
 open(RLST, "/usr/local/etc/root_user_lst") ||
-	die "Cannon read /usr/admin/etc/root_user_lst!\n";
+	die "Cannon read /usr/local/etc/root_user_lst!\n";
 	 
 while (<RLST>) {
 	chomp;
