@@ -112,6 +112,7 @@ sub updateDatabase {
 		date = '$dt',
 		user = '$user',
 		ipv4 = INET_ATON('$ipv4'),
+		ip = '$ipv4',
 		service = '$service',
 		host = '$host'");
 	return;
