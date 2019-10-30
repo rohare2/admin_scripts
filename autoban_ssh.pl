@@ -28,6 +28,7 @@ chomp $list;
 
 # read through /var/log/secure file and process results
 my $host = `uname -n`;
+$host =~ s/\..*//;
 my $file = "/var/log/secure";
 open ( FH, "<$file") || die "Can't open $file: $!\n";
 
@@ -66,11 +67,8 @@ while (<FH>) {
 			next;
 		}
 
-		# check for an existing database entry
-		$found = checkDatabase($dt,$user,$ipv4);
-
 		# If there is no existing database entry create one
-		not($found) && updateDatabase($dt,$user,$ipv4,'ssh');
+		updateDatabase($dt,$user,$ipv4);
 
 		# check for an existing blacklist entry
 		$found = 0;
@@ -86,19 +84,25 @@ sub checkDatabase {
 	my $dt = shift @_;
 	my $user = shift @_;
 	my $ipv4 = shift @_;
-	my $found = 0;
-	my $sth = $dbh->prepare("SELECT date,user,INET_NTOA(ipv4) AS ip
-		FROM autoban");
-	$sth->execute();
-	while (my $ref = $sth->fetchrow_hashref()) {
-		if ( $ref->{'date'} eq $dt &&
-		     $ref->{'user'} eq $user &&
-		     $ref->{'ip'} eq $ipv4 ) {
-			$found = 1;
-		}
+
+	my $sth = $dbh->prepare("SELECT date,user,ipv4
+		FROM autoban
+		WHERE date = ?
+		AND user = ?
+		AND ip = ?");
+	$sth->execute($dt,$user,$ipv4)
+		or die "Couldn't execute statement: " . $sth->errstr;
+
+	if ($sth->rows == 0) {
+		$dbh->do("INSERT INTO autoban SET
+			date = '$dt',
+			user = '$user',
+			ipv4 = INET_ATON('$ipv4'),
+			ip = '$ipv4',
+			service = 'ssh',
+			host = '$host'");
 	}
 	$sth->finish();
-	return $found;
 }
 
 sub updateDatabase {
@@ -106,14 +110,13 @@ sub updateDatabase {
 	my $user = shift @_;
 	my $ipv4 = shift @_;
 	my $service = shift @_;
-	$host =~ s/\..*//;
 
 	$dbh->do("INSERT INTO autoban SET 
 		date = '$dt',
 		user = '$user',
 		ipv4 = INET_ATON('$ipv4'),
 		ip = '$ipv4',
-		service = '$service',
+		service = 'ssh',
 		host = '$host'");
 	return;
 }
