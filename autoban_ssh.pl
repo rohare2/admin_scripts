@@ -80,7 +80,7 @@ while (<FH>) {
 }
 $dbh->disconnect();
 
-sub checkDatabase {
+sub updateDatabase {
 	my $dt = shift @_;
 	my $user = shift @_;
 	my $ipv4 = shift @_;
@@ -103,22 +103,6 @@ sub checkDatabase {
 			host = '$host'");
 	}
 	$sth->finish();
-}
-
-sub updateDatabase {
-	my $dt = shift @_;
-	my $user = shift @_;
-	my $ipv4 = shift @_;
-	my $service = shift @_;
-
-	$dbh->do("INSERT INTO autoban SET 
-		date = '$dt',
-		user = '$user',
-		ipv4 = INET_ATON('$ipv4'),
-		ip = '$ipv4',
-		service = 'ssh',
-		host = '$host'");
-	return;
 }
 
 sub checkBlacklist {
