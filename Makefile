@@ -4,8 +4,7 @@
 SCRIPT_DIR= /usr/local/sbin
 CONFIG_DIR= /usr/local/etc
 
-SCRIPT_FILES= access_request.pl \
-	autoban_http.pl \
+SCRIPT_FILES= autoban_http.pl \
 	autoban_ssh.pl \
 	check_loginsec \
 	check_passwd \
@@ -30,7 +29,7 @@ all: $(FILES)
 
 install: uid_chk all
 	@for file in ${SCRIPT_FILES}; do \
-		${INST} -p $$file ${SCRIPT_DIR} -o root -g admins -m 740; \
+		${INST} -p $$file ${SCRIPT_DIR} -o root -g admins -m 700; \
 	done
 	@for file in ${CONFIG_FILES}; do \
 		${INST} -p $$file ${CONFIG_DIR}/$$file -o root -g admins -m 640; \
