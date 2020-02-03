@@ -30,7 +30,7 @@ all: $(FILES)
 
 install: uid_chk all
 	@for file in ${SCRIPT_FILES}; do \
-		${INST} -p $$file ${SCRIPT_DIR} -o root -g admins -m 700; \
+		${INST} -p $$file ${SCRIPT_DIR} -o root -g admins -m 750; \
 	done
 	@for file in ${CONFIG_FILES}; do \
 		${INST} -p $$file ${CONFIG_DIR}/$$file -o root -g admins -m 640; \
