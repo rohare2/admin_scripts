@@ -16,7 +16,6 @@ SCRIPT_FILES= autoban_http.pl \
 	kill_by_user \
 	kill_defunct \
 	kill_idle_users \
-	loadzones.pl \
 	sar_plot \
 	sensor_chk
 
