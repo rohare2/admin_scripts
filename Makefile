@@ -4,14 +4,10 @@
 SCRIPT_DIR= /usr/local/sbin
 CONFIG_DIR= /usr/local/etc
 
-SCRIPT_FILES= autoban_http.pl \
-	autoban_ssh.pl \
-	check_loginsec \
+SCRIPT_FILES= check_loginsec \
 	check_passwd \
 	cleanup \
-	dec2ip.sh \
 	find_suid_files \
-	ip2dec.sh \
 	ipcs_clean \
 	kill_by_user \
 	kill_defunct \
