@@ -12,6 +12,7 @@ SCRIPT_FILES= check_loginsec \
 	kill_by_user \
 	kill_defunct \
 	kill_idle_users \
+	mk_centos_scap_content.sh \
 	sar_plot \
 	sensor_chk
 
