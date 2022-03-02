@@ -14,7 +14,8 @@ SCRIPT_FILES= check_loginsec \
 	kill_idle_users \
 	mk_centos_scap_content.sh \
 	sar_plot \
-	sensor_chk
+	sensor_chk \
+	suricata_alerts
 
 CONFIG_FILES= 
 

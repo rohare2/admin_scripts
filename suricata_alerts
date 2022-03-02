@@ -1,0 +1,58 @@
+#!/bin/env bash
+# suricata_alerts
+#
+# Set variables
+Dir="/var/log/suricata"
+logFile="eve.json"
+SID=
+
+#########################################################
+# Help
+#########################################################
+Help()
+{
+	# Display Help
+	echo "Suricata log reveiw."
+	echo
+	echo "Syntax: suricata_alerts [-d|f|h|s}"
+	echo "options:"
+	echo "d    Log file directory"
+	echo "f    Log file name"
+	echo "h    Print this help."
+	echo "s    SID to analyse"
+	echo
+}
+
+#########################################################
+# Alert summary report
+#########################################################
+Summary()
+{
+	# Alert summay
+	echo "Processing ${Dir}/${logFile}"
+	cat ${Dir}/${logFile} | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+}
+
+#########################################################
+# Process the input options.
+#########################################################
+# Get the options
+while getopts "hd::f::s::" arg; do
+	case $arg in
+		d) # Log file directory
+			Dir=${OPTARG}
+			;;
+		f) # Log file name
+			LogFile=${OPTARG}
+			;;
+		s) # SID to analyse
+			SID
+			;;
+		h) # No option
+			Help
+			exit 0
+			;;
+	esac
+done
+
+Summary
