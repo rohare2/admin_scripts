@@ -4,7 +4,7 @@
 # Set variables
 Dir="/var/log/suricata"
 logFile="eve.json"
-SID=
+sid=
 
 #########################################################
 # Help
@@ -16,10 +16,10 @@ Help()
 	echo
 	echo "Syntax: suricata_alerts [-d|f|h|s}"
 	echo "options:"
-	echo "d    Log file directory"
-	echo "f    Log file name"
+	echo "d    Optional log file directory"
+	echo "f    Optional log file name"
 	echo "h    Print this help."
-	echo "s    SID to analyse"
+	echo "s    Optional SID to analyse"
 	echo
 }
 
@@ -29,8 +29,24 @@ Help()
 Summary()
 {
 	# Alert summay
-	echo "Processing ${Dir}/${logFile}"
-	cat ${Dir}/${logFile} | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+	Dir="$1"
+	logFile="$2"
+	echo "Alert summary for logfile: ${Dir}/${logFile}"
+	if [[ ${logFile} == *.gz ]]; then
+		zcat "${Dir}/${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+	else
+		cat "${Dir}/${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+	fi
+}
+
+#########################################################
+# SID review
+#########################################################
+SID()
+{
+	echo "Processing ${Dir}/${logFile} for SID $1"
+	jqcmd="jq 'select(.alert.signature_id == [$1])'"
+	cat ${Dir}/${logFile} | $jqcmd
 }
 
 #########################################################
@@ -43,10 +59,10 @@ while getopts "hd::f::s::" arg; do
 			Dir=${OPTARG}
 			;;
 		f) # Log file name
-			LogFile=${OPTARG}
+			logFile=${OPTARG}
 			;;
 		s) # SID to analyse
-			SID
+			sid=${OPTARG}
 			;;
 		h) # No option
 			Help
@@ -55,4 +71,8 @@ while getopts "hd::f::s::" arg; do
 	esac
 done
 
-Summary
+if [ -z "${sid}" ]; then
+	Summary "$Dir" "$logFile"
+else
+	SID "$sid"
+fi
