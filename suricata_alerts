@@ -49,10 +49,7 @@ SID()
 	logFile="$2"
 	sid="$3"
 	echo "Processing ${dir}/${logFile} for SID ${sid}"
-	#cat ${dir}/${logFile} | jq --arg ssid "${sid}" 'select(.alert.signature_id == [$ssid])'
-	#cat ${dir}/${logFile} | jq --arg sid "$sid" 'select(.alert.signature_id == [$sid] )'
-	com="cat ${dir}/${logFile} | jq 'select(.alert.signature_id == $sid )'"
-	echo $com
+	cat ${dir}/${logFile} | jq "select(.alert.signature_id == $sid )"
 }
 
 #########################################################
