@@ -3,7 +3,7 @@
 #
 # Set variables
 dir="/var/log/suricata"
-logFile="eve.json"
+logFile="${dir}/eve.json"
 sid=
 
 #########################################################
@@ -14,11 +14,12 @@ Help()
 	# Display Help
 	echo "Suricata log reveiw."
 	echo
-	echo "Syntax: suricata_alerts [-d|f|h|s}"
+	echo "Syntax: suricata_alerts [h|f|l|s}"
 	echo "options:"
+	echo "h    Print this help."
 	echo "d    Optional log file directory"
 	echo "f    Optional log file name"
-	echo "h    Print this help."
+	echo "l    List available log files"
 	echo "s    Optional SID to analyse"
 	echo
 }
@@ -29,13 +30,12 @@ Help()
 Summary()
 {
 	# Alert summay
-	dir="$1"
-	logFile="$2"
-	echo "Alert summary for logfile: ${dir}/${logFile}"
+	logFile="$1"
+	echo "Alert summary for logfile: ${logFile}"
 	if [[ ${logFile} == *.gz ]]; then
-		zcat "${dir}/${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+		zcat "${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
 	else
-		cat "${dir}/${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+		cat "${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
 	fi
 }
 
@@ -45,22 +45,17 @@ Summary()
 SID()
 {
 	# SID reveiw
-	dir="$1"
-	logFile="$2"
-	sid="$3"
-	echo "Processing ${dir}/${logFile} for SID ${sid}"
-	cat ${dir}/${logFile} | jq "select(.alert.signature_id == $sid )"
+	logFile="$1"
+	sid="$2"
+	cat "${logFile}" | jq "select(.alert.signature_id == $sid )"
 }
 
 #########################################################
 # Process the input options.
 #########################################################
 # Get the options
-while getopts "hd::f::s::" arg; do
+while getopts "hlf::s::" arg; do
 	case $arg in
-		d) # Log file directory
-			dir=${OPTARG}
-			;;
 		f) # Log file name
 			logFile=${OPTARG}
 			;;
@@ -71,11 +66,16 @@ while getopts "hd::f::s::" arg; do
 			Help
 			exit 0
 			;;
+		l) # List log files
+			cmd='ls ${dir}/eve.json*'
+			eval "$cmd"
+			exit 0
+			;;
 	esac
 done
 
 if [ -z "${sid}" ]; then
-	Summary "$dir" "$logFile"
+	Summary "$logFile"
 else
-	SID "$dir" "$logFile" "$sid"
+	SID "$logFile" "$sid"
 fi

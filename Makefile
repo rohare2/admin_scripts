@@ -12,7 +12,7 @@ SCRIPT_FILES= check_loginsec \
 	kill_by_user \
 	kill_defunct \
 	kill_idle_users \
-	mk_centos_scap_content.sh \
+	conv_to_centos_scap \
 	sar_plot \
 	sensor_chk \
 	suricata_alerts
