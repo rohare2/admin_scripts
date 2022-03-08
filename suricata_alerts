@@ -67,7 +67,7 @@ while getopts "hlf::s::" arg; do
 			exit 0
 			;;
 		l) # List log files
-			cmd='ls ${dir}/eve.json*'
+			cmd='ls -ltr ${dir}/eve.json*'
 			eval "$cmd"
 			exit 0
 			;;
