@@ -8,6 +8,7 @@ SCRIPT_FILES= check_loginsec \
 	check_passwd \
 	cleanup \
 	find_suid_files \
+	ip_ban.pl \
 	ipcs_clean \
 	kill_by_user \
 	kill_defunct \
