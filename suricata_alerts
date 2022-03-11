@@ -47,7 +47,11 @@ SID()
 	# SID reveiw
 	logFile="$1"
 	sid="$2"
-	cat "${logFile}" | jq "select(.alert.signature_id == $sid )"
+	if [[ ${logFile} == *.gz ]]; then
+		zcat "${logFile}" | jq "select(.alert.signature_id == $sid )"
+	else
+		cat "${logFile}" | jq "select(.alert.signature_id == $sid )"
+	fi
 }
 
 #########################################################
