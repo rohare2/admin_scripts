@@ -5,6 +5,7 @@
 dir="/var/log/suricata"
 logFile="${dir}/eve.json"
 sid=
+verbose=0
 
 #########################################################
 # Help
@@ -21,6 +22,7 @@ Help()
 	echo "f    Optional log file name"
 	echo "l    List available log files"
 	echo "s    Optional SID to analyse"
+	echo "v    Verbose mode"
 	echo
 }
 
@@ -58,7 +60,7 @@ SID()
 # Process the input options.
 #########################################################
 # Get the options
-while getopts "hlf::s::" arg; do
+while getopts "hlf::s::v" arg; do
 	case $arg in
 		f) # Log file name
 			logFile=${OPTARG}
@@ -74,6 +76,9 @@ while getopts "hlf::s::" arg; do
 			cmd='ls -ltr ${dir}/eve.json*'
 			eval "$cmd"
 			exit 0
+			;;
+		v) # Verbose mode
+			verbose=1
 			;;
 	esac
 done
