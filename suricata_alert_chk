@@ -1,5 +1,5 @@
 #!/bin/env bash
-# suricata_alerts
+# suricata_alert_chk
 #
 # Set variables
 dir="/var/log/suricata"
@@ -13,9 +13,7 @@ verbose=0
 Help()
 {
 	# Display Help
-	echo "Suricata log reveiw."
-	echo
-	echo "Syntax: suricata_alerts [h|f|l|s}"
+	echo "Syntax: suricata_alert_chk [h|f|l|s}"
 	echo "options:"
 	echo "h    Print this help."
 	echo "d    Optional log file directory"

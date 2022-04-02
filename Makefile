@@ -16,7 +16,7 @@ SCRIPT_FILES= check_loginsec \
 	conv_to_centos_scap \
 	sar_plot \
 	sensor_chk \
-	suricata_alerts
+	suricata_alert_chk
 
 CONFIG_FILES= 
 
