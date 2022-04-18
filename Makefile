@@ -7,13 +7,14 @@ CONFIG_DIR= /usr/local/etc
 SCRIPT_FILES= check_loginsec \
 	check_passwd \
 	cleanup \
+	conv_to_centos_scap \
 	find_suid_files \
 	ip_ban.pl \
 	ipcs_clean \
 	kill_by_user \
 	kill_defunct \
 	kill_idle_users \
-	conv_to_centos_scap \
+	master_backup.sh \
 	sar_plot \
 	sensor_chk \
 	suricata_alert_chk \
