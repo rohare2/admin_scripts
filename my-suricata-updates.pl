@@ -1,7 +1,8 @@
 #!/usr/bin/perl
-# suricata_post_update.pl
+# my-suricata-update.pl
 #
-# Re-apply drop action to updated suricata rules
+# wrapper around suricata-update that gets the latest rules and
+# then applies my customizations
 
 use strict;
 use warnings;
@@ -24,6 +25,9 @@ my @sids = (
 	"2403378",
 	"2403383"
 );
+
+# get updated rules
+`suricata-update`;
 
 open( my $fh, '<:encoding(UTF-8)', "$Dir/$ruleFile")
 	or die "Could not open file '$Dir/$ruleFile' $!";
@@ -51,3 +55,5 @@ while (my $row = <$fh>) {
 close $fh;
 close $fh2;
 rename "$Dir/$chgdFile", "$Dir/$ruleFile";
+
+`systemctl reload-or-restart suricata`;
