@@ -15,10 +15,10 @@ SCRIPT_FILES= check_loginsec \
 	kill_defunct \
 	kill_idle_users \
 	master_backup.sh \
+	my-suricata-updates.pl \
 	sar_plot \
 	sensor_chk \
-	suricata_alert_chk \
-	suricata_post_update.pl
+	suricata_alert_chk
 
 CONFIG_FILES= 
 
