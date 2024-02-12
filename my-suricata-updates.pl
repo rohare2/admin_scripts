@@ -14,16 +14,7 @@ my $chgdFile = "suricata.rules.chgd";
 
 # array of sids for rules that need to be changed
 my @sids = (
-	"2100498",
-	"2210057",
-	"2400013",
-	"2402000",
-	"2403302",
-	"2403312",
-	"2403343",
-	"2403344",
-	"2403378",
-	"2403383"
+	"2100498"
 );
 
 # get updated rules
