@@ -6,17 +6,11 @@ CONFIG_DIR= /usr/local/etc
 
 SCRIPT_FILES= check_loginsec \
 	check_passwd \
-	cleanup \
-	conv_to_centos_scap \
 	find_suid_files \
 	ip_ban.pl \
-	ipcs_clean \
-	kill_by_user \
 	kill_defunct \
 	kill_idle_users \
-	master_backup.sh \
 	my-suricata-updates.pl \
-	sar_plot \
 	sensor_chk \
 	suricata_alert_chk
 
@@ -30,10 +24,10 @@ all: $(FILES)
 
 install: uid_chk all
 	@for file in ${SCRIPT_FILES}; do \
-		${INST} -p $$file ${SCRIPT_DIR} -o root -g admins -m 750; \
+		${INST} -p $$file ${SCRIPT_DIR} -o root -g sudo -m 750; \
 	done
 	@for file in ${CONFIG_FILES}; do \
-		${INST} -p $$file ${CONFIG_DIR}/$$file -o root -g admins -m 640; \
+		${INST} -p $$file ${CONFIG_DIR}/$$file -o root -g sudo -m 640; \
 	done
 
 uid_chk:
